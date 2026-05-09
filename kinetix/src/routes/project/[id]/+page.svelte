@@ -7,6 +7,7 @@
   import { Play, Pause, Plus, FileVideo, X, Sparkles } from 'lucide-svelte';
   import Sidebar from '../../../components/Sidebar.svelte';
   import VideoPreview from '../../../components/VideoPreview.svelte';
+  import GraphEditor from '../../../components/GraphEditor.svelte';
   import Timeline from '../../../components/Timeline.svelte';
   import TitleBar from '../../../components/TitleBar.svelte';
   import PropertiesPanel from '../../../components/PropertiesPanel.svelte';
@@ -73,6 +74,7 @@
   let activeClipId: string | null = null;
   let isEyedropperActive = false;
   let eyedropperTarget: { effectId: string; paramId: string } | null = null;
+  let previewMode: 'preview' | 'graph' = 'preview';
 
   // --- Sequence Settings ---
   let sequenceSettings = {
@@ -473,13 +475,42 @@
   }
 
   function updateProjectDuration() {
-    let max = 60;
-    for (const track of timelineTracks) {
-      for (const clip of track) {
-        if (clip.startTime + clip.duration > max) max = clip.startTime + clip.duration;
-      }
+    let max = 5;
+    timelineTracks.forEach(track => {
+      track.forEach(clip => {
+        const end = clip.startTime + clip.duration;
+        if (end > max) max = end;
+      });
+    });
+    projectDuration = max;
+  }
+
+  function handleUpdateKeyframe(e: any) {
+    const { property, index, time, value } = e.detail;
+    if (!selectedClip || !clipProperties[selectedClip.id]) return;
+
+    const props = clipProperties[selectedClip.id];
+    if (!props.transform.keyframes) props.transform.keyframes = {};
+    if (!props.transform.keyframes[property]) props.transform.keyframes[property] = [];
+
+    const kfs = props.transform.keyframes[property];
+    kfs[index] = { time, value };
+    
+    // Sort keyframes by time
+    kfs.sort((a: any, b: any) => a.time - b.time);
+    
+    clipProperties = { ...clipProperties };
+  }
+
+  function handleDeleteKeyframe(e: any) {
+    const { property, index } = e.detail;
+    if (!selectedClip || !clipProperties[selectedClip.id]) return;
+
+    const props = clipProperties[selectedClip.id];
+    if (props.transform.keyframes && props.transform.keyframes[property]) {
+      props.transform.keyframes[property].splice(index, 1);
+      clipProperties = { ...clipProperties };
     }
-    projectDuration = max + 5;
   }
 
   function findAllVisualClipsAtTime(time: number) {
@@ -1076,51 +1107,80 @@
     </div>
 
     <!-- Main Preview Area -->
-    <div class="flex-1 min-h-0 bg-[#0d0d0d] border border-zinc-800/60 rounded-xl overflow-hidden shadow-2xl shadow-black/60 relative">
-      <VideoPreview
-        bind:videoSrc
-        bind:videoType
-        {activeClips}
-        allClipProperties={clipProperties}
-        currentTime={currentTime}
-        duration={videoDuration}
-        {isPlaying}
-        {seekRequest}
-        {isEyedropperActive}
-        selectedClip={selectedClip}
-        properties={selectedMedia ? null : (selectedClip ? clipProperties[selectedClip.id] : (activeClipId ? clipProperties[activeClipId] : null))}
-        projectWidth={sequenceSettings.width}
-        projectHeight={sequenceSettings.height}
-        on:toggleplay={() => isPlaying ? stopPlayback() : startPlayback()}
-        on:videoimport={(e: any) => addMedia(e.detail.name, e.detail.src, e.detail.duration, e.detail.type)}
-        on:clipdrag={handleClipDrag}
-        on:clipresize={handleClipResizePreview}
-        on:select={(e: any) => handleClipSelect(e.detail)}
-        on:deselect={() => handleClipSelect(null)}
-        on:colorpicked={handleColorPicked}
-        on:durationchange={(e: any) => {
-          const newDur = e.detail.duration;
-          videoDuration = newDur;
-          
-          // Update mediaFiles with correct duration
-          const fileIdx = mediaFiles.findIndex(f => f.src === videoSrc);
-          if (fileIdx !== -1 && newDur > 0) {
-            mediaFiles[fileIdx].duration = newDur;
-            mediaFiles = [...mediaFiles];
-          }
-          
-          // Update any timeline clips using this source
-          timelineTracks.forEach((track, trackIdx) => {
-            track.forEach((clip, clipIdx) => {
-              if (clip.src === videoSrc && newDur > 0) {
-                timelineTracks[trackIdx][clipIdx].duration = newDur;
+    <div class="flex-1 min-h-0 bg-[#0d0d0d] border border-zinc-800/60 rounded-xl overflow-hidden shadow-2xl shadow-black/60 relative flex flex-col">
+      <div class="h-8 shrink-0 bg-[#111] border-b border-zinc-800 flex items-center justify-between px-3 z-30">
+        <div class="flex items-center gap-1">
+          <button 
+            on:click={() => previewMode = 'preview'}
+            class="h-6 px-2 rounded-md text-[10px] font-bold transition-all {previewMode === 'preview' ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20' : 'text-zinc-500 hover:text-zinc-300'}"
+          >PREVIEW</button>
+          <button 
+            on:click={() => previewMode = 'graph'}
+            class="h-6 px-2 rounded-md text-[10px] font-bold transition-all {previewMode === 'graph' ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20' : 'text-zinc-500 hover:text-zinc-300'}"
+          >GRAPH EDITOR</button>
+        </div>
+      </div>
+
+      <div class="flex-1 relative">
+        {#if previewMode === 'preview'}
+          <VideoPreview
+            bind:videoSrc
+            bind:videoType
+            {activeClips}
+            allClipProperties={clipProperties}
+            currentTime={currentTime}
+            duration={videoDuration}
+            {isPlaying}
+            {seekRequest}
+            {isEyedropperActive}
+            selectedClip={selectedClip}
+            properties={selectedMedia ? null : (selectedClip ? clipProperties[selectedClip.id] : (activeClipId ? clipProperties[activeClipId] : null))}
+            projectWidth={sequenceSettings.width}
+            projectHeight={sequenceSettings.height}
+            on:toggleplay={() => isPlaying ? stopPlayback() : startPlayback()}
+            on:videoimport={(e: any) => addMedia(e.detail.name, e.detail.src, e.detail.duration, e.detail.type)}
+            on:clipdrag={handleClipDrag}
+            on:clipresize={handleClipResizePreview}
+            on:select={(e: any) => handleClipSelect(e.detail)}
+            on:deselect={() => handleClipSelect(null)}
+            on:durationchange={(e) => {
+              if (selectedClip) {
+                selectedClip.duration = e.detail.duration;
+                timelineTracks = [...timelineTracks];
+                updateProjectDuration();
               }
-            });
-          });
-          timelineTracks = [...timelineTracks];
-          updateProjectDuration();
-        }}
-      />
+            }}
+            on:timeupdate={(e) => {
+              if (isPlaying) {
+                // If the video is driving time, we update currentTime
+                // and then sync everything else.
+                currentTime = (activeClips.find(c => c.id === activeClipId)?.startTime || 0) + e.detail.currentTime;
+              }
+            }}
+            on:colorpicked={(e) => {
+              if (eyedropperTarget && clipProperties[activeClipId!]) {
+                const eff = clipProperties[activeClipId!].effects.find((f: any) => f.id === eyedropperTarget!.effectId);
+                if (eff) {
+                  const param = eff.params.find((p: any) => p.id === eyedropperTarget!.paramId);
+                  if (param) param.value = e.detail.color;
+                }
+                clipProperties = { ...clipProperties };
+                isEyedropperActive = false;
+                eyedropperTarget = null;
+              }
+            }}
+          />
+        {:else}
+          <GraphEditor
+            {selectedClip}
+            properties={selectedMedia ? null : (selectedClip ? clipProperties[selectedClip.id] : null)}
+            currentTime={currentTime}
+            duration={videoDuration}
+            on:updatekeyframe={handleUpdateKeyframe}
+            on:deletekeyframe={handleDeleteKeyframe}
+          />
+        {/if}
+      </div>
     </div>
 
     <!-- Resize Handle 2 -->
@@ -1142,6 +1202,7 @@
         properties={selectedClip ? clipProperties[selectedClip.id] : (activeClipId ? clipProperties[activeClipId] : null)}
         textData={selectedClip ? clipProperties[selectedClip.id].text : (activeClipId ? clipProperties[activeClipId].text : null)}
         effects={selectedClip ? clipProperties[selectedClip.id].effects : (activeClipId ? clipProperties[activeClipId].effects : [])}
+        currentTime={currentTime}
         on:updateTransform={handleUpdateTransform}
         on:updateText={handleUpdateText}
         on:updateEffect={handleUpdateEffect}

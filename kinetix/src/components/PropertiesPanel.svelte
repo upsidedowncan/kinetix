@@ -1,6 +1,8 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from 'svelte';
-  import { Settings2, Move, Scale, RotateCw, Eye, CircleDot, Trash2, ChevronDown, ChevronRight, Pipette, Search, Check, AlignLeft, AlignCenter, AlignRight, Sparkles, Link, Unlink, Diamond } from 'lucide-svelte';
+  import { 
+    Settings2, Move, Scale, RotateCw, Eye, CircleDot, Trash2, ChevronDown, ChevronRight, Pipette, Search, Check, AlignLeft, AlignCenter, AlignRight, Sparkles, Link, Unlink, Diamond 
+  } from 'lucide-svelte';
   import { scale, fade } from 'svelte/transition';
   import { invoke } from '@tauri-apps/api/core';
 
@@ -8,6 +10,7 @@
   export let properties: any = null; // Basic transforms
   export let textData: any = null;
   export let effects: any[] = []; // List of applied effect objects
+  export let currentTime = 0;
 
   const dispatch = createEventDispatcher();
 
@@ -92,8 +95,14 @@
     { id: 'transitions', icon: CircleDot, title: 'Transitions' }
   ];
 
+  $: selectedClipStartTime = selectedClip?.startTime || 0;
+
   function updateTransform(prop: string, value: number | boolean) {
     dispatch('updateTransform', { prop, value });
+  }
+
+  function toggleKeyframe(prop: string) {
+    dispatch('toggleKeyframe', { prop });
   }
 
   function getTransformField(id: string) {
@@ -138,7 +147,7 @@
     dispatch('startEyedropper', { effectId, paramId });
   }
 
-  function toggleKeyframe(effectId: string, paramId: string) {
+  function toggleEffectKeyframe(effectId: string, paramId: string) {
     dispatch('toggleKeyframe', { effectId, paramId });
   }
 
@@ -346,9 +355,19 @@
                     {@const field = getTransformField(fieldId)}
                     {#if field}
                       <div class="space-y-1">
-                        <div class="flex items-center gap-1.5 px-0.5">
-                          <Diamond size={8} class="{field.id === 'scaleX' || field.id === 'scaleY' ? 'text-sky-400 fill-current' : 'text-zinc-500'}" />
-                          <span class="text-[10px] text-zinc-400">{getTransformLabel(field.id)}</span>
+                        <div class="flex items-center justify-between px-0.5">
+                          <div class="flex items-center gap-1.5">
+                            <span class="text-[10px] text-zinc-400">{getTransformLabel(field.id)}</span>
+                          </div>
+                          <button 
+                            on:click={() => toggleKeyframe(field.id)}
+                            class="p-1 rounded hover:bg-zinc-800 transition-colors"
+                          >
+                            <Diamond 
+                              size={8} 
+                              class="{(properties.transform.keyframes?.[field.id] || []).some((kf: any) => Math.abs(kf.time - (currentTime - selectedClipStartTime)) < 0.01) ? 'text-blue-500 fill-current' : 'text-zinc-600'}" 
+                            />
+                          </button>
                         </div>
 
                         <div class="h-8 rounded-xl border border-zinc-800 bg-zinc-900/80 flex items-center gap-1.5 px-2">
@@ -525,11 +544,14 @@
                         {#if param.type === 'color'}
                           <div class="flex items-center gap-2">
                             <button
-                              on:click={() => toggleKeyframe(effect.id, param.id)}
-                              class="p-1 rounded hover:bg-zinc-700 {param.keyframes?.length > 0 ? 'text-blue-400' : 'text-zinc-500'} hover:text-blue-300 transition-colors"
+                              on:click={() => toggleEffectKeyframe(effect.id, param.id)}
+                              class="p-1 rounded hover:bg-zinc-700 transition-colors"
                               title="Toggle Keyframe"
                             >
-                              <CircleDot size={10} />
+                              <Diamond 
+                                size={10} 
+                                class="{(param.keyframes || []).some((kf: any) => Math.abs(kf.time - (currentTime - selectedClipStartTime)) < 0.01) ? 'text-blue-500 fill-current' : 'text-zinc-500'}" 
+                              />
                             </button>
                             <button
                               on:click={() => startEyedropper(effect.id, param.id)}
@@ -546,11 +568,14 @@
                         {:else}
                           <span class="text-[10px] font-mono text-zinc-400">{param.value}{param.unit || ''}</span>
                           <button
-                            on:click={() => toggleKeyframe(effect.id, param.id)}
-                            class="p-1 rounded hover:bg-zinc-700 {param.keyframes?.length > 0 ? 'text-blue-400' : 'text-zinc-500'} hover:text-blue-300 transition-colors ml-1"
+                            on:click={() => toggleEffectKeyframe(effect.id, param.id)}
+                            class="p-1 rounded hover:bg-zinc-700 transition-colors ml-1"
                             title="Toggle Keyframe"
                           >
-                            <CircleDot size={10} />
+                            <Diamond 
+                              size={10} 
+                              class="{(param.keyframes || []).some((kf: any) => Math.abs(kf.time - (currentTime - selectedClipStartTime)) < 0.01) ? 'text-blue-500 fill-current' : 'text-zinc-500'}" 
+                            />
                           </button>
                         {/if}
                       </div>

@@ -90,6 +90,9 @@
   let mouseX = 0;
   let mouseY = 0;
   let isMouseOverStage = false;
+  let hoveredHandle = '';
+  let isHoveringClip = false;
+  let isMouseDown = false;
 
   function handleMouseMove(e: MouseEvent) {
     if (scrollContainer) {
@@ -148,6 +151,13 @@
       document.body.style.cursor = 'default';
     }
   }
+
+  $: currentCursorType = isPanning ? 'grabbing' 
+    : isResizingClip ? (resizeHandle + '-resize')
+    : isDraggingClip ? 'move'
+    : hoveredHandle ? (hoveredHandle + '-resize')
+    : isHoveringClip ? 'move'
+    : 'default';
 
   // Helper to get properties for a specific clip
   function getClipProps(clipId: string) {
@@ -842,7 +852,7 @@
   }
 </script>
 
-<svelte:window on:mousemove={onWindowMouseMove} on:mouseup={onWindowMouseUp} />
+<svelte:window on:mousemove={onWindowMouseMove} on:mouseup={onWindowMouseUp} on:mousedown={() => isMouseDown = true} on:mouseup={() => isMouseDown = false} />
 
 <div class="h-full flex flex-col bg-[#0d0d0d]">
   <div 
@@ -859,13 +869,41 @@
     on:mouseleave={handleMouseLeave}
   >
     <!-- Custom Cursor -->
-    {#if isMouseOverStage && !isPanning}
+    {#if isMouseOverStage}
       <div 
-        class="absolute pointer-events-none z-[100] mix-blend-difference flex items-center justify-center"
-        style="left: {mouseX}px; top: {mouseY}px; transform: translate(-50%, -50%); width: 24px; height: 24px;"
+        class="absolute pointer-events-none z-[100] flex items-center justify-center top-0 left-0"
+        style="
+          transform: translate3d({mouseX}px, {mouseY}px, 0) translate(-50%, -50%) scale({isMouseDown ? 0.9 : 1.2});
+          will-change: transform;
+        "
       >
-        <div class="w-1.5 h-1.5 bg-white rounded-full"></div>
-        <div class="absolute inset-0 border border-white/40 rounded-full scale-100"></div>
+        {#if currentCursorType === 'default'}
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="black" stroke="white" stroke-width="1.5" style="transform: translate(25%, 25%)">
+            <path d="M3 3l7.07 16.97 2.51-7.39 5.69-2.51L3 3z" />
+          </svg>
+        {:else if currentCursorType === 'move'}
+          <div class="bg-black border-2 border-white rounded-full p-1.5 flex items-center justify-center">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m5 9-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20"/>
+            </svg>
+          </div>
+        {:else if currentCursorType === 'grabbing'}
+          <div class="bg-black border-2 border-white rounded-full p-1.5 flex items-center justify-center">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M10 11V6a2 2 0 0 1 4 0v7a2 2 0 0 1 4 0v-1a2 2 0 0 1 4 0v2a2 2 0 1 1-4 0M10 11V4a2 2 0 0 1 4 0v1M10 11 8 8M8 8a2 2 0 0 0-2 2v9a5 2 0 0 0 5 5h3a10 10 0 0 0 8-5V13"/>
+            </svg>
+          </div>
+        {:else if currentCursorType.includes('resize')}
+          <div class="bg-blue-600 border-2 border-white rounded-full p-1.5 flex items-center justify-center shadow-lg shadow-blue-500/20" style="transform: rotate({
+            currentCursorType.includes('nw') || currentCursorType.includes('se') ? '-45deg' :
+            currentCursorType.includes('ne') || currentCursorType.includes('sw') ? '45deg' :
+            currentCursorType.includes('n') || currentCursorType.includes('s') ? '0deg' : '90deg'
+          })">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m15 19-3 3-3-3M12 22V2M9 5l3-3 3 3"/>
+            </svg>
+          </div>
+        {/if}
       </div>
     {/if}
     <div 
@@ -903,7 +941,7 @@
                 <div
                   role="presentation"
                   data-preview-clip="true"
-                  class="relative flex flex-col whitespace-pre-wrap break-words select-none {selectedClip?.id === clip.id ? 'cursor-move' : 'cursor-pointer pointer-events-auto'}"
+                  class="relative flex flex-col whitespace-pre-wrap break-words select-none cursor-none {selectedClip?.id === clip.id ? '' : 'pointer-events-auto'}"
                   style="
                     outline: {selectedClip?.id === clip.id ? '2px solid white' : 'none'};
                     outline-offset: -1px;
@@ -928,24 +966,68 @@
                     }
                     onClipMouseDown(e);
                   }}
+                  on:mouseenter={() => isHoveringClip = true}
+                  on:mouseleave={() => isHoveringClip = false}
                 >
                   {props.text?.content || 'Your text'}
 
                   {#if selectedClip?.id === clip.id}
                     <!-- Handles -->
-                    <div role="presentation" class="handle-invert absolute left-0 top-0 w-3 h-3 cursor-nw-resize" style="transform: translate(-50%, -50%)" on:mousedown={(e) => onHandleMouseDown(e, 'nw')}></div>
-                    <div role="presentation" class="handle-invert absolute right-0 top-0 w-3 h-3 cursor-ne-resize" style="transform: translate(50%, -50%)" on:mousedown={(e) => onHandleMouseDown(e, 'ne')}></div>
-                    <div role="presentation" class="handle-invert absolute left-0 bottom-0 w-3 h-3 cursor-sw-resize" style="transform: translate(-50%, 50%)" on:mousedown={(e) => onHandleMouseDown(e, 'sw')}></div>
-                    <div role="presentation" class="handle-invert absolute right-0 bottom-0 w-3 h-3 cursor-se-resize" style="transform: translate(50%, 50%)" on:mousedown={(e) => onHandleMouseDown(e, 'se')}></div>
-                    <div role="presentation" class="handle-invert absolute left-0 top-1/2 w-3 h-3 cursor-w-resize" style="transform: translate(-50%, -50%)" on:mousedown={(e) => onHandleMouseDown(e, 'w')}></div>
-                    <div role="presentation" class="handle-invert absolute right-0 top-1/2 w-3 h-3 cursor-e-resize" style="transform: translate(50%, -50%)" on:mousedown={(e) => onHandleMouseDown(e, 'e')}></div>
+                    <div 
+                      role="presentation" 
+                      class="handle-invert absolute left-0 top-0 w-3 h-3 cursor-none" 
+                      style="transform: translate(-50%, -50%)" 
+                      on:mousedown={(e) => onHandleMouseDown(e, 'nw')}
+                      on:mouseenter={() => hoveredHandle = 'nw'}
+                      on:mouseleave={() => hoveredHandle = ''}
+                    ></div>
+                    <div 
+                      role="presentation" 
+                      class="handle-invert absolute right-0 top-0 w-3 h-3 cursor-none" 
+                      style="transform: translate(50%, -50%)" 
+                      on:mousedown={(e) => onHandleMouseDown(e, 'ne')}
+                      on:mouseenter={() => hoveredHandle = 'ne'}
+                      on:mouseleave={() => hoveredHandle = ''}
+                    ></div>
+                    <div 
+                      role="presentation" 
+                      class="handle-invert absolute left-0 bottom-0 w-3 h-3 cursor-none" 
+                      style="transform: translate(-50%, 50%)" 
+                      on:mousedown={(e) => onHandleMouseDown(e, 'sw')}
+                      on:mouseenter={() => hoveredHandle = 'sw'}
+                      on:mouseleave={() => hoveredHandle = ''}
+                    ></div>
+                    <div 
+                      role="presentation" 
+                      class="handle-invert absolute right-0 bottom-0 w-3 h-3 cursor-none" 
+                      style="transform: translate(50%, 50%)" 
+                      on:mousedown={(e) => onHandleMouseDown(e, 'se')}
+                      on:mouseenter={() => hoveredHandle = 'se'}
+                      on:mouseleave={() => hoveredHandle = ''}
+                    ></div>
+                    <div 
+                      role="presentation" 
+                      class="handle-invert absolute left-0 top-1/2 w-3 h-3 cursor-none" 
+                      style="transform: translate(-50%, -50%)" 
+                      on:mousedown={(e) => onHandleMouseDown(e, 'w')}
+                      on:mouseenter={() => hoveredHandle = 'w'}
+                      on:mouseleave={() => hoveredHandle = ''}
+                    ></div>
+                    <div 
+                      role="presentation" 
+                      class="handle-invert absolute right-0 top-1/2 w-3 h-3 cursor-none" 
+                      style="transform: translate(50%, -50%)" 
+                      on:mousedown={(e) => onHandleMouseDown(e, 'e')}
+                      on:mouseenter={() => hoveredHandle = 'e'}
+                      on:mouseleave={() => hoveredHandle = ''}
+                    ></div>
                   {/if}
                 </div>
               {:else if clip.type.startsWith('image')}
                 <div 
                   role="presentation"
                   data-preview-clip="true"
-                  class="max-h-full max-w-full flex items-center justify-center relative {selectedClip?.id === clip.id ? 'cursor-move' : 'cursor-pointer pointer-events-auto'}"
+                  class="max-h-full max-w-full flex items-center justify-center relative select-none cursor-none {selectedClip?.id === clip.id ? '' : 'cursor-pointer pointer-events-auto'}"
                   style="
                     outline: {selectedClip?.id === clip.id ? '2px solid white' : 'none'};
                     outline-offset: -1px;
@@ -957,28 +1039,86 @@
                     }
                     onClipMouseDown(e);
                   }}
+                  on:mouseenter={() => isHoveringClip = true}
+                  on:mouseleave={() => isHoveringClip = false}
                 >
                   <img src={clip.src} alt="" class="max-h-full max-w-full object-contain pointer-events-none" />
                   
                   {#if selectedClip?.id === clip.id}
                     <!-- Handles -->
-                    <div role="presentation" class="handle-invert absolute left-0 top-0 w-3 h-3 cursor-nw-resize" style="transform: translate(-50%, -50%)" on:mousedown={(e) => onHandleMouseDown(e, 'nw')}></div>
-                    <div role="presentation" class="handle-invert absolute right-0 top-0 w-3 h-3 cursor-ne-resize" style="transform: translate(50%, -50%)" on:mousedown={(e) => onHandleMouseDown(e, 'ne')}></div>
-                    <div role="presentation" class="handle-invert absolute left-0 bottom-0 w-3 h-3 cursor-sw-resize" style="transform: translate(-50%, 50%)" on:mousedown={(e) => onHandleMouseDown(e, 'sw')}></div>
-                    <div role="presentation" class="handle-invert absolute right-0 bottom-0 w-3 h-3 cursor-se-resize" style="transform: translate(50%, 50%)" on:mousedown={(e) => onHandleMouseDown(e, 'se')}></div>
+                    <div 
+                      role="presentation" 
+                      class="handle-invert absolute left-0 top-0 w-3 h-3 cursor-none" 
+                      style="transform: translate(-50%, -50%)" 
+                      on:mousedown={(e) => onHandleMouseDown(e, 'nw')}
+                      on:mouseenter={() => hoveredHandle = 'nw'}
+                      on:mouseleave={() => hoveredHandle = ''}
+                    ></div>
+                    <div 
+                      role="presentation" 
+                      class="handle-invert absolute right-0 top-0 w-3 h-3 cursor-none" 
+                      style="transform: translate(50%, -50%)" 
+                      on:mousedown={(e) => onHandleMouseDown(e, 'ne')}
+                      on:mouseenter={() => hoveredHandle = 'ne'}
+                      on:mouseleave={() => hoveredHandle = ''}
+                    ></div>
+                    <div 
+                      role="presentation" 
+                      class="handle-invert absolute left-0 bottom-0 w-3 h-3 cursor-none" 
+                      style="transform: translate(-50%, 50%)" 
+                      on:mousedown={(e) => onHandleMouseDown(e, 'sw')}
+                      on:mouseenter={() => hoveredHandle = 'sw'}
+                      on:mouseleave={() => hoveredHandle = ''}
+                    ></div>
+                    <div 
+                      role="presentation" 
+                      class="handle-invert absolute right-0 bottom-0 w-3 h-3 cursor-none" 
+                      style="transform: translate(50%, 50%)" 
+                      on:mousedown={(e) => onHandleMouseDown(e, 'se')}
+                      on:mouseenter={() => hoveredHandle = 'se'}
+                      on:mouseleave={() => hoveredHandle = ''}
+                    ></div>
                     
                     <!-- Edges -->
-                    <div role="presentation" class="handle-invert absolute left-1/2 top-0 w-3 h-3 cursor-n-resize" style="transform: translate(-50%, -50%)" on:mousedown={(e) => onHandleMouseDown(e, 'n')}></div>
-                    <div role="presentation" class="handle-invert absolute left-1/2 bottom-0 w-3 h-3 cursor-s-resize" style="transform: translate(-50%, 50%)" on:mousedown={(e) => onHandleMouseDown(e, 's')}></div>
-                    <div role="presentation" class="handle-invert absolute left-0 top-1/2 w-3 h-3 cursor-w-resize" style="transform: translate(-50%, -50%)" on:mousedown={(e) => onHandleMouseDown(e, 'w')}></div>
-                    <div role="presentation" class="handle-invert absolute right-0 top-1/2 w-3 h-3 cursor-e-resize" style="transform: translate(50%, -50%)" on:mousedown={(e) => onHandleMouseDown(e, 'e')}></div>
+                    <div 
+                      role="presentation" 
+                      class="handle-invert absolute left-1/2 top-0 w-3 h-3 cursor-none" 
+                      style="transform: translate(-50%, -50%)" 
+                      on:mousedown={(e) => onHandleMouseDown(e, 'n')}
+                      on:mouseenter={() => hoveredHandle = 'n'}
+                      on:mouseleave={() => hoveredHandle = ''}
+                    ></div>
+                    <div 
+                      role="presentation" 
+                      class="handle-invert absolute left-1/2 bottom-0 w-3 h-3 cursor-none" 
+                      style="transform: translate(-50%, 50%)" 
+                      on:mousedown={(e) => onHandleMouseDown(e, 's')}
+                      on:mouseenter={() => hoveredHandle = 's'}
+                      on:mouseleave={() => hoveredHandle = ''}
+                    ></div>
+                    <div 
+                      role="presentation" 
+                      class="handle-invert absolute left-0 top-1/2 w-3 h-3 cursor-none" 
+                      style="transform: translate(-50%, -50%)" 
+                      on:mousedown={(e) => onHandleMouseDown(e, 'w')}
+                      on:mouseenter={() => hoveredHandle = 'w'}
+                      on:mouseleave={() => hoveredHandle = ''}
+                    ></div>
+                    <div 
+                      role="presentation" 
+                      class="handle-invert absolute right-0 top-1/2 w-3 h-3 cursor-none" 
+                      style="transform: translate(50%, -50%)" 
+                      on:mousedown={(e) => onHandleMouseDown(e, 'e')}
+                      on:mouseenter={() => hoveredHandle = 'e'}
+                      on:mouseleave={() => hoveredHandle = ''}
+                    ></div>
                   {/if}
                 </div>
               {:else if clip.type.startsWith('video')}
                 <div
                   role="presentation"
                   data-preview-clip="true"
-                  class="max-h-full max-w-full relative {selectedClip?.id === clip.id ? 'cursor-move' : 'cursor-pointer pointer-events-auto'}"
+                  class="max-h-full max-w-full relative select-none cursor-none {selectedClip?.id === clip.id ? '' : 'cursor-pointer pointer-events-auto'}"
                   style="
                     outline: {selectedClip?.id === clip.id ? '2px solid white' : 'none'};
                     outline-offset: -1px;
@@ -989,6 +1129,8 @@
                     }
                     onClipMouseDown(e);
                   }}
+                  on:mouseenter={() => isHoveringClip = true}
+                  on:mouseleave={() => isHoveringClip = false}
                 >
                   {#if clip.id === primaryVideoClip?.id}
                     <video 
@@ -1018,16 +1160,72 @@
 
                   {#if selectedClip?.id === clip.id}
                     <!-- Handles -->
-                    <div role="presentation" class="handle-invert absolute left-0 top-0 w-3 h-3 cursor-nw-resize" style="transform: translate(-50%, -50%)" on:mousedown={(e) => onHandleMouseDown(e, 'nw')}></div>
-                    <div role="presentation" class="handle-invert absolute right-0 top-0 w-3 h-3 cursor-ne-resize" style="transform: translate(50%, -50%)" on:mousedown={(e) => onHandleMouseDown(e, 'ne')}></div>
-                    <div role="presentation" class="handle-invert absolute left-0 bottom-0 w-3 h-3 cursor-sw-resize" style="transform: translate(-50%, 50%)" on:mousedown={(e) => onHandleMouseDown(e, 'sw')}></div>
-                    <div role="presentation" class="handle-invert absolute right-0 bottom-0 w-3 h-3 cursor-se-resize" style="transform: translate(50%, 50%)" on:mousedown={(e) => onHandleMouseDown(e, 'se')}></div>
+                    <div 
+                      role="presentation" 
+                      class="handle-invert absolute left-0 top-0 w-3 h-3 cursor-none" 
+                      style="transform: translate(-50%, -50%)" 
+                      on:mousedown={(e) => onHandleMouseDown(e, 'nw')}
+                      on:mouseenter={() => hoveredHandle = 'nw'}
+                      on:mouseleave={() => hoveredHandle = ''}
+                    ></div>
+                    <div 
+                      role="presentation" 
+                      class="handle-invert absolute right-0 top-0 w-3 h-3 cursor-none" 
+                      style="transform: translate(50%, -50%)" 
+                      on:mousedown={(e) => onHandleMouseDown(e, 'ne')}
+                      on:mouseenter={() => hoveredHandle = 'ne'}
+                      on:mouseleave={() => hoveredHandle = ''}
+                    ></div>
+                    <div 
+                      role="presentation" 
+                      class="handle-invert absolute left-0 bottom-0 w-3 h-3 cursor-none" 
+                      style="transform: translate(-50%, 50%)" 
+                      on:mousedown={(e) => onHandleMouseDown(e, 'sw')}
+                      on:mouseenter={() => hoveredHandle = 'sw'}
+                      on:mouseleave={() => hoveredHandle = ''}
+                    ></div>
+                    <div 
+                      role="presentation" 
+                      class="handle-invert absolute right-0 bottom-0 w-3 h-3 cursor-none" 
+                      style="transform: translate(50%, 50%)" 
+                      on:mousedown={(e) => onHandleMouseDown(e, 'se')}
+                      on:mouseenter={() => hoveredHandle = 'se'}
+                      on:mouseleave={() => hoveredHandle = ''}
+                    ></div>
                     
                     <!-- Edges -->
-                    <div role="presentation" class="handle-invert absolute left-1/2 top-0 w-3 h-3 cursor-n-resize" style="transform: translate(-50%, -50%)" on:mousedown={(e) => onHandleMouseDown(e, 'n')}></div>
-                    <div role="presentation" class="handle-invert absolute left-1/2 bottom-0 w-3 h-3 cursor-s-resize" style="transform: translate(-50%, 50%)" on:mousedown={(e) => onHandleMouseDown(e, 's')}></div>
-                    <div role="presentation" class="handle-invert absolute left-0 top-1/2 w-3 h-3 cursor-w-resize" style="transform: translate(-50%, -50%)" on:mousedown={(e) => onHandleMouseDown(e, 'w')}></div>
-                    <div role="presentation" class="handle-invert absolute right-0 top-1/2 w-3 h-3 cursor-e-resize" style="transform: translate(50%, -50%)" on:mousedown={(e) => onHandleMouseDown(e, 'e')}></div>
+                    <div 
+                      role="presentation" 
+                      class="handle-invert absolute left-1/2 top-0 w-3 h-3 cursor-none" 
+                      style="transform: translate(-50%, -50%)" 
+                      on:mousedown={(e) => onHandleMouseDown(e, 'n')}
+                      on:mouseenter={() => hoveredHandle = 'n'}
+                      on:mouseleave={() => hoveredHandle = ''}
+                    ></div>
+                    <div 
+                      role="presentation" 
+                      class="handle-invert absolute left-1/2 bottom-0 w-3 h-3 cursor-none" 
+                      style="transform: translate(-50%, 50%)" 
+                      on:mousedown={(e) => onHandleMouseDown(e, 's')}
+                      on:mouseenter={() => hoveredHandle = 's'}
+                      on:mouseleave={() => hoveredHandle = ''}
+                    ></div>
+                    <div 
+                      role="presentation" 
+                      class="handle-invert absolute left-0 top-1/2 w-3 h-3 cursor-none" 
+                      style="transform: translate(-50%, -50%)" 
+                      on:mousedown={(e) => onHandleMouseDown(e, 'w')}
+                      on:mouseenter={() => hoveredHandle = 'w'}
+                      on:mouseleave={() => hoveredHandle = ''}
+                    ></div>
+                    <div 
+                      role="presentation" 
+                      class="handle-invert absolute right-0 top-1/2 w-3 h-3 cursor-none" 
+                      style="transform: translate(50%, -50%)" 
+                      on:mousedown={(e) => onHandleMouseDown(e, 'e')}
+                      on:mouseenter={() => hoveredHandle = 'e'}
+                      on:mouseleave={() => hoveredHandle = ''}
+                    ></div>
                   {/if}
                 </div>
               {/if}
