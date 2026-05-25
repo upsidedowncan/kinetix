@@ -57,8 +57,14 @@
 
   const dispatch = createEventDispatcher();
   let video: HTMLVideoElement;
+  let audioElements: Record<string, HTMLAudioElement> = {};
   let canvas: HTMLCanvasElement;
-  let ctx: CanvasRenderingContext2D;
+  let gl: WebGLRenderingContext | null = null;
+  let program: WebGLProgram | null = null;
+  let positionBuffer: WebGLBuffer | null = null;
+  let texCoordBuffer: WebGLBuffer | null = null;
+  let videoTexture: WebGLTexture | null = null;
+
   let lastSeek = -1;
   let currentFilePath = '';
   let isImporting = false;
@@ -211,6 +217,39 @@
     }
   }
 
+  // Handle Audio Sync
+  $: {
+    const audioClips = activeClips.filter(c => c.type?.startsWith('audio'));
+
+    // Play/Stop audio
+    Object.keys(audioElements).forEach(id => {
+      const clip = audioClips.find(c => c.id === id);
+      const audio = audioElements[id];
+      if (!clip) {
+        audio.pause();
+        delete audioElements[id];
+      } else {
+        if (isPlaying && audio.paused) audio.play();
+        else if (!isPlaying && !audio.paused) audio.pause();
+
+        // Sync time
+        const relTime = currentTime - clip.startTime;
+        if (Math.abs(audio.currentTime - relTime) > 0.1) {
+          audio.currentTime = relTime;
+        }
+      }
+    });
+
+    audioClips.forEach(clip => {
+      if (!audioElements[clip.id]) {
+        const audio = new Audio(clip.src);
+        audio.volume = allClipProperties[clip.id]?.volume ?? 1.0;
+        audioElements[clip.id] = audio;
+        if (isPlaying) audio.play();
+      }
+    });
+  }
+
   $: if (video && seekRequest !== lastSeek) {
     // If we are playing, only seek if we drift by more than 0.15s (about 4-5 frames)
     // to avoid constant micro-stuttering while keeping sync tight.
@@ -318,267 +357,345 @@
     };
   }
 
-  function renderCanvas() {
-    if (!canvas) return;
-    if (!ctx) ctx = canvas.getContext('2d', { willReadFrequently: true })!;
-    if (!ctx) return;
-    
-    // Find which clip this canvas belongs to. 
-    // In our simplified model, we'll use the properties of the selected clip 
-    // if it has advanced effects, otherwise the top-most active clip with effects.
-    const effectClip = activeClips.find(c => c.id === selectedClip?.id && hasAdvancedEffects(c.id)) 
-                     || [...activeClips].reverse().find(c => hasAdvancedEffects(c.id));
-    
-    if (!effectClip) return;
-    const clipProps = getClipProps(effectClip.id);
-    const clipType = effectClip.type;
-    
-    const isText = clipType.startsWith('text') || clipType === 'image/text-raster';
-    const isImage = clipType.startsWith('image');
+  const VS_SOURCE = `
+    attribute vec2 a_position;
+    attribute vec2 a_texCoord;
+    varying vec2 v_texCoord;
+    void main() {
+      gl_Position = vec4(a_position, 0, 1);
+      v_texCoord = a_texCoord;
+    }
+  `;
 
-    if (isText) {
-      // For text clips, we use the untransformed container dimensions
-      const parent = canvas.parentElement;
-      if (parent) {
-        const width = parent.clientWidth || 1920;
-        const height = parent.clientHeight || 1080;
-        if (canvas.width !== width || canvas.height !== height) {
-          canvas.width = width;
-          canvas.height = height;
+  const FS_SOURCE = `
+    precision mediump float;
+    uniform sampler2D u_image;
+    varying vec2 v_texCoord;
+
+    uniform float u_brightness;
+    uniform float u_contrast;
+    uniform float u_saturation;
+    uniform float u_sepia;
+    uniform float u_invert;
+    uniform float u_hue;
+
+    uniform bool u_chromaActive;
+    uniform vec3 u_chromaKeyColor;
+    uniform float u_chromaSimilarity;
+    uniform float u_chromaSmoothness;
+    uniform float u_chromaSpill;
+
+    uniform bool u_vignetteActive;
+    uniform float u_vignetteStrength;
+    uniform float u_vignetteSoftness;
+
+    uniform bool u_rgbSplitActive;
+    uniform float u_rgbSplitAmount;
+    uniform vec2 u_resolution;
+
+    uniform bool u_pixelateActive;
+    uniform float u_pixelateSize;
+
+    uniform bool u_distortionActive;
+    uniform float u_distortionAmplitude;
+    uniform float u_distortionFrequency;
+    uniform float u_time;
+
+    vec3 applyHue(vec3 rgb, float hue) {
+      vec3 k = vec3(0.57735, 0.57735, 0.57735);
+      float cosAngle = cos(hue);
+      return rgb * cosAngle + cross(k, rgb) * sin(hue) + k * dot(k, rgb) * (1.0 - cosAngle);
+    }
+
+    void main() {
+      vec2 texCoord = v_texCoord;
+
+      // Pixelate
+      if (u_pixelateActive && u_pixelateSize > 1.0) {
+        vec2 size = u_resolution / u_pixelateSize;
+        texCoord = floor(texCoord * size) / size;
+      }
+
+      // Distortion
+      if (u_distortionActive) {
+        texCoord.x += sin(texCoord.y * u_distortionFrequency + u_time) * (u_distortionAmplitude / u_resolution.x);
+      }
+
+      vec4 color;
+      if (u_rgbSplitActive) {
+        float offset = u_rgbSplitAmount / u_resolution.x;
+        float r = texture2D(u_image, texCoord + vec2(offset, 0.0)).r;
+        float g = texture2D(u_image, texCoord).g;
+        float b = texture2D(u_image, texCoord - vec2(offset, 0.0)).b;
+        color = vec4(r, g, b, texture2D(u_image, texCoord).a);
+      } else {
+        color = texture2D(u_image, texCoord);
+      }
+
+      // Chroma Key
+      if (u_chromaActive) {
+        float diff = distance(color.rgb, u_chromaKeyColor);
+        if (diff < u_chromaSimilarity) {
+          color.a = 0.0;
+        } else if (diff < u_chromaSimilarity + u_chromaSmoothness) {
+          color.a = (diff - u_chromaSimilarity) / u_chromaSmoothness;
+        }
+
+        if (color.a > 0.0 && u_chromaSpill > 0.0) {
+          float greenExcess = max(0.0, color.g - max(color.r, color.b));
+          color.g -= greenExcess * u_chromaSpill;
         }
       }
 
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      // Brightness & Contrast
+      color.rgb += u_brightness;
+      color.rgb = (color.rgb - 0.5) * u_contrast + 0.5;
+
+      // Saturation
+      float gray = dot(color.rgb, vec3(0.299, 0.587, 0.114));
+      color.rgb = mix(vec3(gray), color.rgb, u_saturation);
+
+      // Hue Shift
+      if (abs(u_hue) > 0.001) {
+        color.rgb = applyHue(color.rgb, u_hue);
+      }
+
+      // Sepia
+      if (u_sepia > 0.0) {
+        vec3 sepiaColor = vec3(
+          dot(color.rgb, vec3(0.393, 0.769, 0.189)),
+          dot(color.rgb, vec3(0.349, 0.686, 0.168)),
+          dot(color.rgb, vec3(0.272, 0.534, 0.131))
+        );
+        color.rgb = mix(color.rgb, sepiaColor, u_sepia);
+      }
+
+      // Invert
+      color.rgb = mix(color.rgb, 1.0 - color.rgb, u_invert);
+
+      // Vignette
+      if (u_vignetteActive) {
+        float dist = distance(v_texCoord, vec2(0.5));
+        float edge = smoothstep(1.0 - u_vignetteSoftness, 1.0, dist * 1.5);
+        color.rgb *= (1.0 - edge * u_vignetteStrength);
+      }
+
+      gl_FragColor = color;
+    }
+  `;
+
+  function initWebGL() {
+    if (!canvas) return;
+    gl = canvas.getContext('webgl', { preserveDrawingBuffer: true });
+    if (!gl) {
+      console.error("WebGL not supported");
+      return;
+    }
+
+    const createShader = (gl: WebGLRenderingContext, type: number, source: string) => {
+      const shader = gl.createShader(type)!;
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        console.error(gl.getShaderInfoLog(shader));
+        gl.deleteShader(shader);
+        return null;
+      }
+      return shader;
+    };
+
+    const vs = createShader(gl, gl.VERTEX_SHADER, VS_SOURCE);
+    const fs = createShader(gl, gl.FRAGMENT_SHADER, FS_SOURCE);
+    program = gl.createProgram()!;
+    gl.attachShader(program, vs!);
+    gl.attachShader(program, fs!);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      console.error(gl.getProgramInfoLog(program));
+      return;
+    }
+
+    positionBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]), gl.STATIC_DRAW);
+
+    texCoordBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 0]), gl.STATIC_DRAW);
+
+    videoTexture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, videoTexture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  }
+
+  function renderCanvas() {
+    if (!canvas) return;
+    if (!gl) initWebGL();
+    if (!gl || !program) return;
+
+    if (video && video.requestVideoFrameCallback) {
+      video.requestVideoFrameCallback(renderCanvas);
+    }
+
+    const effectClip = activeClips.find(c => c.id === selectedClip?.id && hasAdvancedEffects(c.id)) 
+                     || [...activeClips].reverse().find(c => hasAdvancedEffects(c.id));
+    
+    if (!effectClip) {
+      // Clear canvas if no effects needed
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      return;
+    }
+
+    const clipProps = getClipProps(effectClip.id);
+    const clipType = effectClip.type;
+    const isText = clipType.startsWith('text') || clipType === 'image/text-raster';
+    const isImage = clipType.startsWith('image');
+
+    let sourceElement: any = null;
+    if (isText) {
+      // For text, we first render to a temporary 2D canvas
+      const tempCanvas = document.createElement('canvas');
+      const parent = canvas.parentElement;
+      tempCanvas.width = parent?.clientWidth || 1920;
+      tempCanvas.height = parent?.clientHeight || 1080;
+      const tCtx = tempCanvas.getContext('2d')!;
       
       const text = clipProps?.text;
       if (text) {
-        ctx.save();
-        
-        // Match CSS alignment/flex behavior
+        tCtx.save();
         const align = text.align || 'center';
         const fontSize = text.fontSize || 64;
         const weight = text.weight || 700;
         const font = text.fontFamily || 'Arial';
-        
-        ctx.font = `${weight} ${fontSize}px "${font}"`;
-        ctx.fillStyle = text.color || '#ffffff';
-        ctx.textAlign = align as CanvasTextAlign;
-        ctx.textBaseline = 'middle';
-        
-        // Multi-line support
+        tCtx.font = `${weight} ${fontSize}px "${font}"`;
+        tCtx.fillStyle = text.color || '#ffffff';
+        tCtx.textAlign = align as CanvasTextAlign;
+        tCtx.textBaseline = 'middle';
         const lines = (text.content || 'Your text').split('\n');
         const lineHeight = fontSize * 1.2;
         const totalHeight = lines.length * lineHeight;
-        
-        let startY = (canvas.height / 2) - (totalHeight / 2) + (lineHeight / 2);
-        let startX = canvas.width / 2;
-        
-        if (align === 'left') startX = canvas.width * 0.05;
-        if (align === 'right') startX = canvas.width * 0.95;
-
+        let startY = (tempCanvas.height / 2) - (totalHeight / 2) + (lineHeight / 2);
+        let startX = tempCanvas.width / 2;
+        if (align === 'left') startX = tempCanvas.width * 0.05;
+        if (align === 'right') startX = tempCanvas.width * 0.95;
         lines.forEach((line: string, i: number) => {
-          // Draw stroke if exists
           if (text.strokeWidth > 0) {
-            ctx.strokeStyle = text.strokeColor || '#000000';
-            ctx.lineWidth = text.strokeWidth * 2;
-            ctx.lineJoin = 'round';
-            ctx.strokeText(line, startX, startY + (i * lineHeight));
+            tCtx.strokeStyle = text.strokeColor || '#000000';
+            tCtx.lineWidth = text.strokeWidth * 2;
+            tCtx.lineJoin = 'round';
+            tCtx.strokeText(line, startX, startY + (i * lineHeight));
           }
-          ctx.fillText(line, startX, startY + (i * lineHeight));
+          tCtx.fillText(line, startX, startY + (i * lineHeight));
         });
-        
-        ctx.restore();
+        tCtx.restore();
       }
+      sourceElement = tempCanvas;
     } else if (isImage) {
-      const img = canvas.parentElement?.querySelector('img');
-      if (img && img.complete) {
-        if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
-          canvas.width = img.naturalWidth;
-          canvas.height = img.naturalHeight;
-        }
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      } else {
+      sourceElement = canvas.parentElement?.querySelector('img');
+      if (!sourceElement || !sourceElement.complete) {
         if (isPlaying) animationFrame = requestAnimationFrame(renderCanvas);
         return;
       }
     } else {
-      if (!video) return;
-      // Ensure we have valid dimensions
-      if (video.videoWidth === 0) {
+      sourceElement = video;
+      if (!sourceElement || sourceElement.videoWidth === 0) {
         if (isPlaying) animationFrame = requestAnimationFrame(renderCanvas);
         return;
       }
-
-      if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-      }
-
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    }
-    
-    // Check for advanced effects
-    const effects = clipProps?.effects || [];
-    
-    // 1. Chroma Key (Process first)
-    const chromaEffect = effects.find((e: any) => e.type === 'chromakey');
-    if (chromaEffect) {
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const data = imageData.data;
-      
-      const targetColor = hexToRgb(chromaEffect.params.find((p: any) => p.id === 'color').value);
-      const similarity = (chromaEffect.params.find((p: any) => p.id === 'similarity').value / 100);
-      const smoothness = (chromaEffect.params.find((p: any) => p.id === 'smoothness').value / 100);
-      const spill = (chromaEffect.params.find((p: any) => p.id === 'spill').value / 100);
-      
-      const simSq = similarity * similarity * 195075;
-      const smoothSq = smoothness * smoothness * 195075;
-      const spillFactor = spill;
-
-      for (let i = 0; i < data.length; i += 4) {
-        const r = data[i];
-        const g = data[i + 1];
-        const b = data[i + 2];
-        
-        const dR = r - targetColor.r;
-        const dG = g - targetColor.g;
-        const dB = b - targetColor.b;
-        const dSq = dR * dR + dG * dG + dB * dB;
-        
-        if (dSq < simSq) {
-          data[i + 3] = 0;
-        } else if (dSq < simSq + smoothSq) {
-          data[i + 3] = ((dSq - simSq) / smoothSq) * 255;
-        } else {
-          data[i + 3] = 255;
-        }
-
-        if (data[i + 3] > 0 && spillFactor > 0) {
-          const greenExcess = g - Math.max(r, b);
-          if (greenExcess > 0 && targetColor.g > targetColor.r && targetColor.g > targetColor.b) {
-            data[i + 1] -= greenExcess * spillFactor;
-          }
-        }
-      }
-      ctx.putImageData(imageData, 0, 0);
     }
 
-    // 3. RGB Split
-    const rgbSplitEffect = effects.find((e: any) => e.type === 'rgbsplit');
-    if (rgbSplitEffect) {
-      const amount = rgbSplitEffect.params.find((p: any) => p.id === 'amount').value;
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const sourceData = new Uint8ClampedArray(imageData.data);
-      const targetData = imageData.data;
-      const w = canvas.width;
-      const h = canvas.height;
-      const offset = Math.max(0, Math.floor(amount));
+    const width = isText ? sourceElement.width : (isImage ? sourceElement.naturalWidth : sourceElement.videoWidth);
+    const height = isText ? sourceElement.height : (isImage ? sourceElement.naturalHeight : sourceElement.videoHeight);
 
-      for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-          const idx = (y * w + x) * 4;
-          const xr = Math.min(w - 1, x + offset);
-          const xb = Math.max(0, x - offset);
-          const idxR = (y * w + xr) * 4;
-          const idxB = (y * w + xb) * 4;
-
-          targetData[idx] = sourceData[idxR];
-          targetData[idx + 1] = sourceData[idx + 1];
-          targetData[idx + 2] = sourceData[idxB + 2];
-          targetData[idx + 3] = sourceData[idx + 3];
-        }
-      }
-      ctx.putImageData(imageData, 0, 0);
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+      gl.viewport(0, 0, width, height);
     }
 
-    // 4. Pixelate
-    const pixelateEffect = effects.find((e: any) => e.type === 'pixelate');
-    if (pixelateEffect) {
-      const size = Math.max(1, Math.floor(pixelateEffect.params.find((p: any) => p.id === 'size').value));
-      if (size > 1) {
-        const w = canvas.width;
-        const h = canvas.height;
-        const tmpW = Math.max(1, Math.floor(w / size));
-        const tmpH = Math.max(1, Math.floor(h / size));
+    gl.useProgram(program);
 
-        ctx.imageSmoothingEnabled = false;
-        ctx.drawImage(canvas, 0, 0, w, h, 0, 0, tmpW, tmpH);
-        ctx.drawImage(canvas, 0, 0, tmpW, tmpH, 0, 0, w, h);
-        ctx.imageSmoothingEnabled = true;
-      }
+    // Set Attributes
+    const posLoc = gl.getAttribLocation(program, "a_position");
+    gl.enableVertexAttribArray(posLoc);
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+    gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+
+    const texLoc = gl.getAttribLocation(program, "a_texCoord");
+    gl.enableVertexAttribArray(texLoc);
+    gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+    gl.vertexAttribPointer(texLoc, 2, gl.FLOAT, false, 0, 0);
+
+    // Update Texture
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, videoTexture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, sourceElement);
+
+    // Set Uniforms
+    const getVal = (type: string, id: string = 'level') => {
+      const eff = clipProps.effects?.find((e: any) => e.type === type);
+      if (!eff) return null;
+      return eff.params.find((p: any) => p.id === id)?.value;
+    };
+
+    gl.uniform1f(gl.getUniformLocation(program, "u_brightness"), (getVal('brightness') || 100) / 100 - 1);
+    gl.uniform1f(gl.getUniformLocation(program, "u_contrast"), (getVal('contrast') || 100) / 100);
+    gl.uniform1f(gl.getUniformLocation(program, "u_saturation"), (getVal('saturation') || 100) / 100);
+    gl.uniform1f(gl.getUniformLocation(program, "u_invert"), (getVal('invert') || 0) / 100);
+    gl.uniform1f(gl.getUniformLocation(program, "u_sepia"), (getVal('sepia') || 0) / 100);
+    gl.uniform1f(gl.getUniformLocation(program, "u_hue"), (getVal('hueshift', 'angle') || 0) * Math.PI / 180);
+
+    // Chroma
+    const chroma = clipProps.effects?.find((e: any) => e.type === 'chromakey');
+    gl.uniform1i(gl.getUniformLocation(program, "u_chromaActive"), chroma ? 1 : 0);
+    if (chroma) {
+      const color = hexToRgb(chroma.params.find((p: any) => p.id === 'color').value);
+      gl.uniform3f(gl.getUniformLocation(program, "u_chromaKeyColor"), color.r / 255, color.g / 255, color.b / 255);
+      gl.uniform1f(gl.getUniformLocation(program, "u_chromaSimilarity"), chroma.params.find((p: any) => p.id === 'similarity').value / 100);
+      gl.uniform1f(gl.getUniformLocation(program, "u_chromaSmoothness"), chroma.params.find((p: any) => p.id === 'smoothness').value / 100);
+      gl.uniform1f(gl.getUniformLocation(program, "u_chromaSpill"), chroma.params.find((p: any) => p.id === 'spill').value / 100);
     }
 
-    // 5. Vignette
-    const vignetteEffect = effects.find((e: any) => e.type === 'vignette');
-    if (vignetteEffect) {
-      const strength = vignetteEffect.params.find((p: any) => p.id === 'strength').value / 100;
-      const softness = Math.max(0.01, vignetteEffect.params.find((p: any) => p.id === 'softness').value / 100);
-      const w = canvas.width;
-      const h = canvas.height;
-      const cx = w / 2;
-      const cy = h / 2;
-      const maxDist = Math.sqrt(cx * cx + cy * cy);
-      const imageData = ctx.getImageData(0, 0, w, h);
-      const data = imageData.data;
-
-      for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-          const idx = (y * w + x) * 4;
-          const dx = x - cx;
-          const dy = y - cy;
-          const dist = Math.sqrt(dx * dx + dy * dy) / maxDist;
-          const edge = Math.max(0, (dist - (1 - softness)) / softness);
-          const darken = 1 - edge * strength;
-
-          data[idx] *= darken;
-          data[idx + 1] *= darken;
-          data[idx + 2] *= darken;
-        }
-      }
-      ctx.putImageData(imageData, 0, 0);
+    // Vignette
+    const vignette = clipProps.effects?.find((e: any) => e.type === 'vignette');
+    gl.uniform1i(gl.getUniformLocation(program, "u_vignetteActive"), vignette ? 1 : 0);
+    if (vignette) {
+      gl.uniform1f(gl.getUniformLocation(program, "u_vignetteStrength"), vignette.params.find((p: any) => p.id === 'strength').value / 100);
+      gl.uniform1f(gl.getUniformLocation(program, "u_vignetteSoftness"), vignette.params.find((p: any) => p.id === 'softness').value / 100);
     }
 
-    // 2. Distortion Effect (Wave)
-    const distortionEffect = effects.find((e: any) => e.type === 'distortion');
-    if (distortionEffect) {
-      const amplitude = distortionEffect.params.find((p: any) => p.id === 'amplitude').value;
-      const frequency = distortionEffect.params.find((p: any) => p.id === 'frequency').value;
-      const speed = distortionEffect.params.find((p: any) => p.id === 'speed').value;
-      
-      const time = performance.now() / 1000 * speed;
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const sourceData = new Uint8ClampedArray(imageData.data);
-      const targetData = imageData.data;
-      
-      const w = canvas.width;
-      const h = canvas.height;
-
-      for (let y = 0; y < h; y++) {
-        // Calculate offset based on sine wave
-        const xOffset = Math.sin(y * frequency + time) * amplitude;
-        
-        for (let x = 0; x < w; x++) {
-          const sourceX = Math.floor(x + xOffset);
-          
-          if (sourceX >= 0 && sourceX < w) {
-            const sourceIdx = (y * w + sourceX) * 4;
-            const targetIdx = (y * w + x) * 4;
-            
-            targetData[targetIdx] = sourceData[sourceIdx];
-            targetData[targetIdx + 1] = sourceData[sourceIdx + 1];
-            targetData[targetIdx + 2] = sourceData[sourceIdx + 2];
-            targetData[targetIdx + 3] = sourceData[sourceIdx + 3];
-          } else {
-            // Out of bounds - make transparent or black
-            const targetIdx = (y * w + x) * 4;
-            targetData[targetIdx + 3] = 0;
-          }
-        }
-      }
-      ctx.putImageData(imageData, 0, 0);
+    // RGB Split
+    const rgbSplit = clipProps.effects?.find((e: any) => e.type === 'rgbsplit');
+    gl.uniform1i(gl.getUniformLocation(program, "u_rgbSplitActive"), rgbSplit ? 1 : 0);
+    if (rgbSplit) {
+      gl.uniform1f(gl.getUniformLocation(program, "u_rgbSplitAmount"), rgbSplit.params.find((p: any) => p.id === 'amount').value);
     }
 
-    if (isPlaying) {
+    // Pixelate
+    const pixelate = clipProps.effects?.find((e: any) => e.type === 'pixelate');
+    gl.uniform1i(gl.getUniformLocation(program, "u_pixelateActive"), pixelate ? 1 : 0);
+    if (pixelate) {
+      gl.uniform1f(gl.getUniformLocation(program, "u_pixelateSize"), pixelate.params.find((p: any) => p.id === 'size').value);
+    }
+
+    // Distortion
+    const distortion = clipProps.effects?.find((e: any) => e.type === 'distortion');
+    gl.uniform1i(gl.getUniformLocation(program, "u_distortionActive"), distortion ? 1 : 0);
+    if (distortion) {
+      gl.uniform1f(gl.getUniformLocation(program, "u_distortionAmplitude"), distortion.params.find((p: any) => p.id === 'amplitude').value);
+      gl.uniform1f(gl.getUniformLocation(program, "u_distortionFrequency"), distortion.params.find((p: any) => p.id === 'frequency').value);
+      gl.uniform1f(gl.getUniformLocation(program, "u_time"), (performance.now() / 1000) * distortion.params.find((p: any) => p.id === 'speed').value);
+    }
+
+    gl.uniform2f(gl.getUniformLocation(program, "u_resolution"), width, height);
+
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+    if (isPlaying && (!video || !video.requestVideoFrameCallback)) {
       animationFrame = requestAnimationFrame(renderCanvas);
     }
   }
@@ -616,8 +733,8 @@
       video.currentTime = 0.001;
     }
     
-    // Initialize canvas context
-    ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+    // Initialize WebGL context
+    if (!gl) initWebGL();
     renderCanvas();
     
     dispatch('durationchange', { duration });
@@ -754,15 +871,18 @@
   }
 
   function onCanvasClick(event: MouseEvent) {
-    if (!isEyedropperActive || !canvas || !ctx) return;
+    if (!isEyedropperActive || !canvas || !gl) return;
     
     const rect = canvas.getBoundingClientRect();
     // Map mouse coordinates to internal canvas resolution
     const x = ((event.clientX - rect.left) / rect.width) * canvas.width;
     const y = ((event.clientY - rect.top) / rect.height) * canvas.height;
     
-    const pixel = ctx.getImageData(x, y, 1, 1).data;
-    const hex = `#${pixel[0].toString(16).padStart(2, '0')}${pixel[1].toString(16).padStart(2, '0')}${pixel[2].toString(16).padStart(2, '0')}`;
+    // In WebGL, we use readPixels
+    const pixels = new Uint8Array(4);
+    gl.readPixels(x, canvas.height - y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+
+    const hex = `#${pixels[0].toString(16).padStart(2, '0')}${pixels[1].toString(16).padStart(2, '0')}${pixels[2].toString(16).padStart(2, '0')}`;
     
     dispatch('colorpicked', { color: hex });
   }
@@ -1095,7 +1215,7 @@
                       on:mousedown={(e) => onHandleMouseDown(e, 's')}
                       on:mouseenter={() => hoveredHandle = 's'}
                       on:mouseleave={() => hoveredHandle = ''}
-                    ></div>
+                  ></div>
                     <div 
                       role="presentation" 
                       class="handle-invert absolute left-0 top-1/2 w-3 h-3 cursor-none" 
