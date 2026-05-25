@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
-  import { Diamond, MousePointer2, Scissors, Trash2, Sparkles } from 'lucide-svelte';
+  import { Diamond, MousePointer2, Scissors, Trash2, Sparkles, Volume2 } from 'lucide-svelte';
   
   export let currentTime = 0;
   export let projectDuration = 60;
@@ -17,8 +17,13 @@
   let resizingTransition: { clipId: string, position: 'start' | 'end', startX: number, startDuration: number } | null = null;
   const TRACK_GUTTER_PX = 48;
 
-  $: trackWidth = Math.max(1, containerWidth - TRACK_GUTTER_PX);
-  $: playheadPx = TRACK_GUTTER_PX + (currentTime / projectDuration) * trackWidth;
+  let trackWidth = 1;
+  let playheadPx = TRACK_GUTTER_PX;
+
+  $: {
+    trackWidth = Math.max(1, containerWidth - TRACK_GUTTER_PX);
+    playheadPx = TRACK_GUTTER_PX + (currentTime / projectDuration) * trackWidth;
+  }
 
   function clampToTrack(clientX: number, rect: DOMRect) {
     return Math.max(0, Math.min(clientX - rect.left - TRACK_GUTTER_PX, trackWidth));
@@ -258,8 +263,14 @@
         <div class="flex-1 group/lane relative border-b border-zinc-800/30 hover:bg-white/[0.01] transition-colors min-h-[40px]">
           <!-- Track Info Sidebar (Sticky) -->
           <div class="sticky left-0 top-0 bottom-0 w-12 bg-[#0a0a0a]/90 backdrop-blur-sm border-r border-zinc-800/50 flex flex-col items-center justify-center z-20 pointer-events-none shadow-[4px_0_10px_rgba(0,0,0,0.3)]">
-            <span class="text-[10px] text-zinc-600 font-black tracking-tighter opacity-50 mb-1">{i === 0 ? 'V1' : i === 1 ? 'V2' : 'V3'}</span>
-            <div class="w-1.5 h-1.5 rounded-full {i === 0 ? 'bg-blue-500/40' : i === 1 ? 'bg-purple-500/40' : 'bg-green-500/40'} shadow-[0_0_8px_rgba(0,0,0,0.5)]"></div>
+            <span class="text-[10px] text-zinc-600 font-black tracking-tighter opacity-50 mb-1">
+              {i < 3 ? `V${i+1}` : `A${i-2}`}
+            </span>
+            <div class="w-1.5 h-1.5 rounded-full {
+              i === 0 ? 'bg-blue-500/40' :
+              i === 1 ? 'bg-purple-500/40' :
+              i === 2 ? 'bg-green-500/40' : 'bg-amber-500/40'
+            } shadow-[0_0_8px_rgba(0,0,0,0.5)]"></div>
           </div>
           
           <div class="absolute inset-0 left-12 flex items-center">
@@ -271,6 +282,7 @@
                   {activeTool === 'razor' ? 'cursor-crosshair ring-2 ring-red-500/50' : 'cursor-default'}
                   {clip.type?.startsWith('image') ? 'bg-[#2a1b3d] border-purple-500/30 hover:border-purple-400/50 shadow-purple-500/5' : 
                    clip.type?.startsWith('text') ? 'bg-[#3d2b1b] border-amber-500/30 hover:border-amber-400/50 shadow-amber-500/5' : 
+                   clip.type?.startsWith('audio') ? 'bg-[#1b3d2a] border-green-500/30 hover:border-green-400/50 shadow-green-500/5' :
                    'bg-[#1b2a3d] border-blue-500/30 hover:border-blue-400/50 shadow-blue-500/5'} border-l-[3px] border-y border-r"
                 style="left: {(clip.startTime / projectDuration) * 100}%; width: {(clip.duration / projectDuration) * 100}%"
                 data-name={clip.name}
@@ -301,6 +313,14 @@
                 {/if}
                 
                 <div class="flex-1 flex items-center justify-between min-w-0 h-full relative px-2">
+                  {#if clip.type?.startsWith('audio')}
+                    <!-- Simplified Audio Waveform -->
+                    <div class="absolute inset-0 flex items-center justify-around px-1 opacity-20 pointer-events-none">
+                      {#each Array(20) as _}
+                        <div class="w-0.5 bg-green-400 rounded-full" style="height: {20 + Math.random() * 60}%"></div>
+                      {/each}
+                    </div>
+                  {/if}
                   <!-- Transition Indicators (Stylized) -->
                   {#if clipProperties[clip.id]?.transitions?.in?.type && clipProperties[clip.id]?.transitions?.in?.type !== 'none'}
                     {@const transIn = clipProperties[clip.id].transitions.in}
@@ -365,6 +385,9 @@
                   {/if}
 
                   <div class="flex items-center gap-2 min-w-0 relative z-20">
+                    {#if clip.type?.startsWith('audio')}
+                      <Volume2 size={10} class="text-green-400 shrink-0" />
+                    {/if}
                     <span class="truncate font-bold text-zinc-100/90 tracking-tight">{clip.name}</span>
                     {#if clipProperties[clip.id]?.effects?.length > 0}
                       <div class="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/20 scale-[0.85] origin-left backdrop-blur-sm">

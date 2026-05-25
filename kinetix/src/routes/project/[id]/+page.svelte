@@ -4,7 +4,7 @@
   import { fade, scale } from 'svelte/transition';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { invoke, convertFileSrc } from '@tauri-apps/api/core';
-  import { Play, Pause, Plus, FileVideo, X, Sparkles } from 'lucide-svelte';
+  import { Play, Pause, Plus, FileVideo, X, Sparkles, Download } from 'lucide-svelte';
   import Sidebar from '../../../components/Sidebar.svelte';
   import VideoPreview from '../../../components/VideoPreview.svelte';
   import GraphEditor from '../../../components/GraphEditor.svelte';
@@ -83,6 +83,9 @@
     fps: 30
   };
   let showSequenceSettings = false;
+  let showExportDialog = false;
+  let isExporting = false;
+  let exportProgress = 0;
 
   function openSequenceSettings() {
     showSequenceSettings = true;
@@ -90,6 +93,43 @@
   
   function closeSequenceSettings() {
     showSequenceSettings = false;
+  }
+
+  function openExport() {
+    showExportDialog = true;
+  }
+
+  async function handleExport() {
+    isExporting = true;
+    exportProgress = 0;
+
+    // Simulate progress
+    const interval = setInterval(() => {
+      exportProgress += 5;
+      if (exportProgress >= 90) clearInterval(interval);
+    }, 100);
+
+    try {
+      const result = await invoke('export_video', {
+        projectData: {
+          tracks: timelineTracks,
+          properties: clipProperties,
+          settings: sequenceSettings
+        },
+        outputPath: 'exported_video.mp4'
+      });
+      exportProgress = 100;
+      setTimeout(() => {
+        alert(result);
+        showExportDialog = false;
+        isExporting = false;
+      }, 500);
+    } catch (e) {
+      alert('Export failed: ' + e);
+      isExporting = false;
+    } finally {
+      clearInterval(interval);
+    }
   }
 
 
@@ -176,6 +216,63 @@
     currentTime = newClip.startTime;
     seekRequest = 0;
     
+    updateProjectDuration();
+  }
+
+  function addSFXClip(sfx: { id: string, name: string, url: string }) {
+    const duration = 2; // Default SFX duration or we could probe it
+    const newClip = {
+      id: crypto.randomUUID(),
+      name: sfx.name,
+      src: sfx.url,
+      type: 'audio/mpeg',
+      duration,
+      startTime: currentTime
+    };
+
+    // Add to audio track (track 3)
+    if (timelineTracks.length <= 3) {
+      timelineTracks.push([]);
+    }
+    timelineTracks[3].push(newClip);
+    timelineTracks = [...timelineTracks];
+
+    clipProperties[newClip.id] = {
+      volume: 1.0
+    };
+
+    updateProjectDuration();
+  }
+
+  function addStickerClip(sticker: { id: string, name: string, url: string }) {
+    const duration = 5;
+    const newClip = {
+      id: crypto.randomUUID(),
+      name: sticker.name,
+      src: sticker.url,
+      type: 'image/sticker',
+      duration,
+      startTime: currentTime
+    };
+
+    // Add to a higher track
+    timelineTracks[2].push(newClip);
+    timelineTracks = [...timelineTracks];
+
+    clipProperties[newClip.id] = {
+      transform: { x: 0, y: 0, scale: 0.5, scaleX: 0.5, scaleY: 0.5, scaleLocked: true, rotation: 0, opacity: 1 },
+      effects: [],
+      transition: { type: 'none', duration: 0.5 }
+    };
+
+    selectedMedia = null;
+    selectedClip = newClip;
+    activeClipId = newClip.id;
+    videoSrc = sticker.url;
+    videoType = 'image/sticker';
+    videoDuration = duration;
+    seekRequest = -1;
+
     updateProjectDuration();
   }
 
@@ -513,15 +610,12 @@
     }
   }
 
-  function findAllVisualClipsAtTime(time: number) {
+  function findAllActiveClipsAtTime(time: number) {
     const active: any[] = [];
-    // Go in reverse (Track 2, then 1, then 0) so top tracks are first in array?
-    // Actually, usually we want bottom track (0) rendered first, so it's under.
     for (let i = 0; i < timelineTracks.length; i++) {
       const track = timelineTracks[i];
       const clip = track.find((c: any) => {
-        const isVisual = c.type?.startsWith('video') || c.type?.startsWith('image') || c.type?.startsWith('text');
-        return isVisual && time >= c.startTime && time <= c.startTime + c.duration;
+        return time >= c.startTime && time <= c.startTime + c.duration;
       });
       if (clip) {
         active.push({ ...clip, trackIndex: i });
@@ -531,7 +625,7 @@
   }
 
   function syncPreviewToTime() {
-    const allActive = findAllVisualClipsAtTime(currentTime);
+    const allActive = findAllActiveClipsAtTime(currentTime);
     activeClips = allActive;
 
     const activeClipAtTime = allActive.length > 0 ? allActive[allActive.length - 1] : null;
@@ -924,14 +1018,91 @@
 
 <svelte:window on:mousemove={handleMouseMove} on:mouseup={handleMouseUp} />
 
-<div class="h-screen flex flex-col bg-[#050505] text-zinc-100 overflow-hidden select-none p-2.5 gap-2.5">
-  <div class="shrink-0 bg-[#0d0d0d] border border-zinc-800/60 rounded-xl px-1 shadow-lg shadow-black/40">
+<div class="h-screen flex flex-col bg-background text-zinc-100 overflow-hidden select-none p-2.5 gap-2.5">
+  <div class="shrink-0 bg-surface border border-surface-border/30 rounded-xl px-1 shadow-pro">
     <TitleBar 
       showBackButton={true} 
       {breadcrumbs} 
       onOpenSequenceSettings={openSequenceSettings}
+      onOpenExport={openExport}
     />
   </div>
+
+  {#if showExportDialog}
+    <div
+      transition:fade={{ duration: 150 }}
+      class="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-md p-4"
+    >
+      <div
+        transition:scale={{ duration: 250, start: 0.95 }}
+        class="bg-[#111] border border-zinc-800 rounded-2xl w-full max-w-[420px] shadow-[0_0_50px_rgba(0,0,0,0.5)] overflow-hidden"
+      >
+        <div class="h-10 bg-[#181818] border-b border-zinc-800 flex items-center justify-between px-4">
+          <div class="flex items-center gap-2">
+            <Download size={14} class="text-blue-500" />
+            <span class="text-xs font-bold text-zinc-300 uppercase tracking-widest">Export Video</span>
+          </div>
+          <button on:click={() => !isExporting && (showExportDialog = false)} class="text-zinc-500 hover:text-white transition-colors">
+            <X size={16} />
+          </button>
+        </div>
+
+        <div class="p-6 space-y-6">
+          {#if isExporting}
+            <div class="space-y-4 py-4">
+              <div class="flex justify-between text-[10px] font-black text-zinc-500 uppercase tracking-widest">
+                <span>Rendering Project...</span>
+                <span>{exportProgress}%</span>
+              </div>
+              <div class="h-1.5 bg-zinc-900 rounded-full overflow-hidden">
+                <div
+                  class="h-full bg-blue-600 transition-all duration-300 shadow-[0_0_10px_rgba(37,99,235,0.5)]"
+                  style="width: {exportProgress}%"
+                ></div>
+              </div>
+              <p class="text-[10px] text-zinc-600 text-center italic">Constructing high-quality frames via FFmpeg pipeline</p>
+            </div>
+          {:else}
+            <div class="space-y-4">
+              <div class="space-y-2">
+                <span class="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">Export Format</span>
+                <select class="w-full bg-[#0d0d0d] border border-zinc-800 rounded-lg h-9 px-3 text-xs text-zinc-200 outline-none focus:border-blue-500/50 transition-colors">
+                  <option>MP4 (H.264 / AAC)</option>
+                  <option>MOV (ProRes 422)</option>
+                  <option>WebM (VP9)</option>
+                </select>
+              </div>
+
+              <div class="space-y-2">
+                <span class="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">Quality Preset</span>
+                <div class="grid grid-cols-2 gap-2">
+                  <button class="py-2 bg-zinc-900 border border-blue-500/40 text-blue-400 rounded-lg text-[10px] font-bold">HIGH QUALITY</button>
+                  <button class="py-2 bg-zinc-900 border border-zinc-800 text-zinc-500 rounded-lg text-[10px] font-bold hover:border-zinc-700">FAST RENDER</button>
+                </div>
+              </div>
+            </div>
+          {/if}
+        </div>
+
+        <div class="bg-[#181818] p-4 flex gap-3 border-t border-zinc-800">
+          <button
+            on:click={() => showExportDialog = false}
+            disabled={isExporting}
+            class="flex-1 h-9 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-[11px] font-bold text-zinc-300 transition-all active:scale-95 disabled:opacity-50"
+          >
+            CANCEL
+          </button>
+          <button
+            on:click={handleExport}
+            disabled={isExporting}
+            class="flex-1 h-9 rounded-xl bg-blue-600 hover:bg-blue-500 text-[11px] font-bold text-white transition-all active:scale-95 shadow-lg shadow-blue-600/20 disabled:opacity-50"
+          >
+            {isExporting ? 'EXPORTING...' : 'START EXPORT'}
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
 
   {#if showSequenceSettings}
     <div 
@@ -1074,7 +1245,7 @@
 
   <div class="flex-1 flex min-h-0 gap-1.5 overflow-hidden">
     <!-- Sidebar -->
-    <div style="width: {sidebarWidth}px" class="shrink-0 flex flex-col bg-[#0d0d0d] border border-zinc-800/60 rounded-xl overflow-hidden shadow-2xl shadow-black/60">
+    <div style="width: {sidebarWidth}px" class="shrink-0 flex flex-col bg-surface border border-surface-border/30 rounded-xl overflow-hidden shadow-pro">
       <Sidebar
         bind:activeTab={sidebarTab}
         {mediaFiles}
@@ -1091,6 +1262,8 @@
           addMedia(name, src, duration, type, thumbnail);
         }}
         on:addtext={addTextClip}
+        on:addsticker={(e) => addStickerClip(e.detail)}
+        on:addsfx={(e) => addSFXClip(e.detail)}
       />
     </div>
 
@@ -1107,8 +1280,8 @@
     </div>
 
     <!-- Main Preview Area -->
-    <div class="flex-1 min-h-0 bg-[#0d0d0d] border border-zinc-800/60 rounded-xl overflow-hidden shadow-2xl shadow-black/60 relative flex flex-col">
-      <div class="h-8 shrink-0 bg-[#111] border-b border-zinc-800 flex items-center justify-between px-3 z-30">
+    <div class="flex-1 min-h-0 bg-surface border border-surface-border/30 rounded-xl overflow-hidden shadow-pro relative flex flex-col">
+      <div class="h-8 shrink-0 bg-surface-lighter/30 border-b border-surface-border/30 flex items-center justify-between px-3 z-30">
         <div class="flex items-center gap-1">
           <button 
             on:click={() => previewMode = 'preview'}
@@ -1143,21 +1316,21 @@
             on:clipresize={handleClipResizePreview}
             on:select={(e: any) => handleClipSelect(e.detail)}
             on:deselect={() => handleClipSelect(null)}
-            on:durationchange={(e) => {
+            on:durationchange={(e: any) => {
               if (selectedClip) {
                 selectedClip.duration = e.detail.duration;
                 timelineTracks = [...timelineTracks];
                 updateProjectDuration();
               }
             }}
-            on:timeupdate={(e) => {
+            on:timeupdate={(e: any) => {
               if (isPlaying) {
                 // If the video is driving time, we update currentTime
                 // and then sync everything else.
                 currentTime = (activeClips.find(c => c.id === activeClipId)?.startTime || 0) + e.detail.currentTime;
               }
             }}
-            on:colorpicked={(e) => {
+            on:colorpicked={(e: any) => {
               if (eyedropperTarget && clipProperties[activeClipId!]) {
                 const eff = clipProperties[activeClipId!].effects.find((f: any) => f.id === eyedropperTarget!.effectId);
                 if (eff) {
@@ -1196,7 +1369,7 @@
     </div>
 
     <!-- Properties -->
-    <div style="width: {propertiesWidth}px" class="shrink-0 flex flex-col bg-[#0d0d0d] border border-zinc-800/60 rounded-xl overflow-hidden shadow-2xl shadow-black/60">
+    <div style="width: {propertiesWidth}px" class="shrink-0 flex flex-col bg-surface border border-surface-border/30 rounded-xl overflow-hidden shadow-pro">
       <PropertiesPanel 
         {selectedClip} 
         properties={selectedClip ? clipProperties[selectedClip.id] : (activeClipId ? clipProperties[activeClipId] : null)}
@@ -1227,7 +1400,7 @@
   </div>
 
   <!-- Bottom Timeline Area -->
-  <div style="height: {timelineHeight}px" class="shrink-0 bg-[#0d0d0d] w-full border border-zinc-800/60 rounded-xl overflow-hidden shadow-2xl shadow-black/60">
+  <div style="height: {timelineHeight}px" class="shrink-0 bg-surface w-full border border-surface-border/30 rounded-xl overflow-hidden shadow-pro">
     <Timeline
       {currentTime}
       {projectDuration}

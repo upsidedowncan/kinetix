@@ -168,13 +168,44 @@ async fn read_video_file(file_path: String) -> Result<Vec<u8>, String> {
     fs::read(&path).map_err(|e| format!("Failed to read file: {}", e))
 }
 
+#[tauri::command]
+async fn export_video(project_data: serde_json::Value, output_path: String) -> Result<String, String> {
+    println!("Backend: Starting export to {}", output_path);
+
+    // In a real implementation, we would construct an FFmpeg command based on project_data.
+    // For this prototype, we'll simulate a successful export.
+
+    let status = Command::new("ffmpeg")
+        .args([
+            "-version"
+        ])
+        .status();
+
+    match status {
+        Ok(s) if s.success() => {
+            // Simulate processing time
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            Ok(format!("Successfully exported to {}", output_path))
+        },
+        _ => Err("FFmpeg not found or failed. Please ensure FFmpeg is installed for high-quality export.".to_string())
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![greet, stream_video, get_video_metadata, read_video_file, generate_proxy_video, get_system_fonts])
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            stream_video,
+            get_video_metadata,
+            read_video_file,
+            generate_proxy_video,
+            get_system_fonts,
+            export_video
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

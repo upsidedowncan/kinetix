@@ -1,13 +1,14 @@
 <script lang="ts">
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { goto } from '$app/navigation';
-  import { ArrowLeft, Minus, Square, X } from 'lucide-svelte';
+  import { ArrowLeft, Minus, Square, X, Download } from 'lucide-svelte';
 
   import { Settings, FileVideo, ChevronDown } from 'lucide-svelte';
   
   export let showBackButton: boolean = false;
   export let breadcrumbs: { label: string; onClick?: () => void }[] = [];
   export let onOpenSequenceSettings: () => void = () => {};
+  export let onOpenExport: () => void = () => {};
 
   let currentWindow = getCurrentWindow();
   let showFileMenu = false;
@@ -71,6 +72,17 @@
         </button>
       {/each}
     </div>
+
+    <div class="w-px h-4 bg-zinc-800 mx-2"></div>
+
+    <button
+      on:click={onOpenExport}
+      style="-webkit-app-region: no-drag"
+      class="flex items-center gap-1.5 px-3 py-1 rounded-md bg-blue-600 hover:bg-blue-500 transition-all text-white shadow-lg shadow-blue-600/20 active:scale-95"
+    >
+      <Download size={12} />
+      <span class="text-[11px] font-bold tracking-tight uppercase">Export</span>
+    </button>
 
     <div class="w-px h-4 bg-zinc-800 mx-2"></div>
 

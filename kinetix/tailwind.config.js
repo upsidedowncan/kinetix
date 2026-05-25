@@ -4,22 +4,32 @@ export default {
   theme: {
     extend: {
       colors: {
-        background: '#121212',
-        surface: '#1E1E1E',
-        surfaceVariant: '#2C2C2C',
-        primary: '#3B82F6',
-        secondary: '#03DAC6',
-        error: '#CF6679',
+        background: '#09090b', // Zinc 950
+        surface: '#18181b',    // Zinc 900
+        'surface-lighter': '#27272a', // Zinc 800
+        'surface-border': '#3f3f46',  // Zinc 700
+        primary: {
+          DEFAULT: '#3b82f6', // Blue 500
+          hover: '#2563eb',   // Blue 600
+        },
+        accent: {
+          DEFAULT: '#f43f5e', // Rose 500
+          hover: '#e11d48',   // Rose 600
+        },
+        muted: '#71717a',      // Zinc 500
       },
       borderRadius: {
-        '3xl': '8px',
+        'xl': '12px',
+        '2xl': '16px',
       },
       boxShadow: {
-        'elevation-1': '0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24)',
-        'elevation-2': '0 3px 6px rgba(0,0,0,0.15), 0 2px 4px rgba(0,0,0,0.12)',
-        'elevation-3': '0 10px 20px rgba(0,0,0,0.15), 0 3px 6px rgba(0,0,0,0.10)',
-        'elevation-4': '0 15px 25px rgba(0,0,0,0.15), 0 5px 10px rgba(0,0,0,0.05)',
+        'pro': '0 0 20px -5px rgba(0, 0, 0, 0.5)',
+        'pro-lg': '0 0 40px -10px rgba(0, 0, 0, 0.7)',
       },
+      fontFamily: {
+        sans: ['Inter', 'system-ui', 'sans-serif'],
+        mono: ['JetBrains Mono', 'monospace'],
+      }
     },
   },
   plugins: [],

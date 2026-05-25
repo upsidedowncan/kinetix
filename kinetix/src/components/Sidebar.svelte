@@ -1,11 +1,11 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
-  import { Plus, Film, Music, Image, Palette, Sparkles, Type } from 'lucide-svelte';
+  import { Plus, Film, Music, Image, Palette, Sparkles, Type, Smile, Volume2 } from 'lucide-svelte';
   import { open } from '@tauri-apps/plugin-dialog';
   import { invoke } from '@tauri-apps/api/core';
   import { convertFileSrc } from '@tauri-apps/api/core';
 
-  export let activeTab: 'media' | 'filters' = 'media';
+  export let activeTab: 'media' | 'filters' | 'stickers' | 'sfx' = 'media';
   export let mediaFiles: { id: string; name: string; src: string; type: string; duration: number; thumbnail?: string }[] = [];
   export let onMediaSelect: (mediaItem: any) => void = () => {};
 
@@ -103,6 +103,24 @@
     >
       <Sparkles size={12} />
       Effects
+    </button>
+    <button
+      class="flex-1 py-3 text-[10px] font-bold uppercase tracking-wider transition-colors flex items-center justify-center gap-1.5 {activeTab === 'stickers'
+        ? 'text-blue-400 bg-zinc-800/50 border-b-2 border-blue-500'
+        : 'text-zinc-500 hover:text-zinc-300'}"
+      on:click={() => (activeTab = 'stickers')}
+    >
+      <Smile size={12} />
+      Stickers
+    </button>
+    <button
+      class="flex-1 py-3 text-[10px] font-bold uppercase tracking-wider transition-colors flex items-center justify-center gap-1.5 {activeTab === 'sfx'
+        ? 'text-blue-400 bg-zinc-800/50 border-b-2 border-blue-500'
+        : 'text-zinc-500 hover:text-zinc-300'}"
+      on:click={() => (activeTab = 'sfx')}
+    >
+      <Volume2 size={12} />
+      SFX
     </button>
   </div>
 
@@ -247,6 +265,57 @@
             {/each}
           </div>
         {/if}
+      </div>
+    {:else if activeTab === 'sfx'}
+      <div class="p-3 space-y-4">
+        {#each [
+          { category: 'Impacts', items: [
+            { id: 'impact1', name: 'Heavy Thud', url: 'https://www.soundjay.com/button/sounds/button-1.mp3' },
+            { id: 'impact2', name: 'Metallic', url: 'https://www.soundjay.com/button/sounds/button-2.mp3' }
+          ]},
+          { category: 'Transitions', items: [
+            { id: 'woosh1', name: 'Whoosh Soft', url: 'https://www.soundjay.com/button/sounds/button-3.mp3' },
+            { id: 'woosh2', name: 'Whoosh Fast', url: 'https://www.soundjay.com/button/sounds/button-4.mp3' }
+          ]}
+        ] as cat}
+          <div class="space-y-2">
+            <h4 class="text-[9px] font-bold text-zinc-500 uppercase tracking-widest">{cat.category}</h4>
+            <div class="grid grid-cols-1 gap-1.5">
+              {#each cat.items as sfx}
+                <button
+                  class="flex items-center gap-3 px-3 py-2 bg-zinc-800/30 border border-zinc-800 rounded-lg hover:bg-zinc-800/60 transition-all text-left group"
+                  on:click={() => dispatch('addsfx', sfx)}
+                >
+                  <div class="p-1.5 bg-blue-500/10 rounded-md text-blue-400 group-hover:bg-blue-500/20 transition-colors">
+                    <Volume2 size={12} />
+                  </div>
+                  <span class="text-[11px] font-medium text-zinc-300">{sfx.name}</span>
+                </button>
+              {/each}
+            </div>
+          </div>
+        {/each}
+      </div>
+    {:else if activeTab === 'stickers'}
+      <div class="p-3 grid grid-cols-2 gap-2">
+        {#each [
+          { id: 'heart', name: 'Heart', url: 'https://api.iconify.design/noto:heart.svg' },
+          { id: 'star', name: 'Star', url: 'https://api.iconify.design/noto:star.svg' },
+          { id: 'fire', name: 'Fire', url: 'https://api.iconify.design/noto:fire.svg' },
+          { id: 'rocket', name: 'Rocket', url: 'https://api.iconify.design/noto:rocket.svg' },
+          { id: 'cool', name: 'Cool', url: 'https://api.iconify.design/noto:smiling-face-with-sunglasses.svg' },
+          { id: 'party', name: 'Party', url: 'https://api.iconify.design/noto:party-popper.svg' },
+          { id: 'thumbsup', name: 'Thumbs Up', url: 'https://api.iconify.design/noto:thumbs-up.svg' },
+          { id: 'sparkles', name: 'Sparkles', url: 'https://api.iconify.design/noto:sparkles.svg' }
+        ] as sticker}
+          <button
+            class="aspect-square bg-zinc-800/30 border border-zinc-800 rounded-lg p-3 hover:bg-zinc-800/60 transition-all group flex flex-col items-center justify-center gap-2"
+            on:click={() => dispatch('addsticker', sticker)}
+          >
+            <img src={sticker.url} alt={sticker.name} class="w-10 h-10 group-hover:scale-110 transition-transform" />
+            <span class="text-[9px] font-bold text-zinc-500 uppercase">{sticker.name}</span>
+          </button>
+        {/each}
       </div>
     {:else}
       <div class="p-3">
