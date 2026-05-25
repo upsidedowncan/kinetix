@@ -4,7 +4,7 @@
   import { fade, scale } from 'svelte/transition';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { invoke, convertFileSrc } from '@tauri-apps/api/core';
-  import { Play, Pause, Plus, FileVideo, X, Sparkles, Download } from 'lucide-svelte';
+  import { Play, Pause, Plus, FileVideo, X, Sparkles, Download, Check } from 'lucide-svelte';
   import Sidebar from '../../../components/Sidebar.svelte';
   import VideoPreview from '../../../components/VideoPreview.svelte';
   import GraphEditor from '../../../components/GraphEditor.svelte';
@@ -86,6 +86,9 @@
   let showExportDialog = false;
   let isExporting = false;
   let exportProgress = 0;
+  let exportPath = '';
+  let exportStatus: 'idle' | 'exporting' | 'success' | 'error' = 'idle';
+  let exportErrorMessage = '';
 
   function openSequenceSettings() {
     showSequenceSettings = true;
@@ -97,17 +100,44 @@
 
   function openExport() {
     showExportDialog = true;
+    exportStatus = 'idle';
+    exportProgress = 0;
+  }
+
+  import { save } from '@tauri-apps/plugin-dialog';
+  import { revealItemInDir } from '@tauri-apps/plugin-opener';
+
+  async function selectExportPath() {
+    try {
+      const selected = await save({
+        filters: [
+          { name: 'Video', extensions: ['mp4', 'mov', 'webm'] }
+        ],
+        defaultPath: 'my_video.mp4'
+      });
+      if (selected) {
+        exportPath = selected;
+      }
+    } catch (e) {
+      console.error('Failed to open save dialog:', e);
+    }
   }
 
   async function handleExport() {
+    if (!exportPath) {
+      await selectExportPath();
+      if (!exportPath) return;
+    }
+
     isExporting = true;
+    exportStatus = 'exporting';
     exportProgress = 0;
 
     // Simulate progress
     const interval = setInterval(() => {
-      exportProgress += 5;
-      if (exportProgress >= 90) clearInterval(interval);
-    }, 100);
+      exportProgress += 2;
+      if (exportProgress >= 98) clearInterval(interval);
+    }, 50);
 
     try {
       const result = await invoke('export_video', {
@@ -116,19 +146,26 @@
           properties: clipProperties,
           settings: sequenceSettings
         },
-        outputPath: 'exported_video.mp4'
+        outputPath: exportPath
       });
       exportProgress = 100;
-      setTimeout(() => {
-        alert(result);
-        showExportDialog = false;
-        isExporting = false;
-      }, 500);
+      exportStatus = 'success';
     } catch (e) {
-      alert('Export failed: ' + e);
-      isExporting = false;
+      exportStatus = 'error';
+      exportErrorMessage = String(e);
     } finally {
+      isExporting = false;
       clearInterval(interval);
+    }
+  }
+
+  async function openExportFolder() {
+    if (exportPath) {
+      try {
+        await revealItemInDir(exportPath);
+      } catch (e) {
+        console.error('Failed to open folder:', e);
+      }
     }
   }
 
@@ -1048,7 +1085,7 @@
         </div>
 
         <div class="p-6 space-y-6">
-          {#if isExporting}
+          {#if exportStatus === 'exporting'}
             <div class="space-y-4 py-4">
               <div class="flex justify-between text-[10px] font-black text-zinc-500 uppercase tracking-widest">
                 <span>Rendering Project...</span>
@@ -1062,8 +1099,52 @@
               </div>
               <p class="text-[10px] text-zinc-600 text-center italic">Constructing high-quality frames via FFmpeg pipeline</p>
             </div>
+          {:else if exportStatus === 'success'}
+            <div class="space-y-4 py-4 text-center">
+              <div class="w-12 h-12 bg-green-500/10 rounded-full flex items-center justify-center mx-auto mb-2">
+                <Check class="text-green-500" size={24} />
+              </div>
+              <h3 class="text-sm font-bold text-white uppercase tracking-wider">Export Complete</h3>
+              <p class="text-[10px] text-zinc-400 break-all bg-black/30 p-2 rounded-lg border border-zinc-800/50">
+                {exportPath}
+              </p>
+              <button
+                on:click={openExportFolder}
+                class="text-[10px] text-blue-400 font-bold hover:text-blue-300 underline underline-offset-4"
+              >
+                OPEN IN FILE EXPLORER
+              </button>
+            </div>
+          {:else if exportStatus === 'error'}
+            <div class="space-y-4 py-4 text-center">
+              <div class="w-12 h-12 bg-red-500/10 rounded-full flex items-center justify-center mx-auto mb-2">
+                <X class="text-red-500" size={24} />
+              </div>
+              <h3 class="text-sm font-bold text-white uppercase tracking-wider">Export Failed</h3>
+              <p class="text-[10px] text-red-400/80 bg-red-500/5 p-2 rounded-lg border border-red-500/10">
+                {exportErrorMessage}
+              </p>
+            </div>
           {:else}
             <div class="space-y-4">
+              <div class="space-y-2">
+                <span class="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">Save As</span>
+                <div class="flex gap-2">
+                  <input
+                    type="text"
+                    value={exportPath || 'Not selected...'}
+                    readonly
+                    class="flex-1 bg-[#0d0d0d] border border-zinc-800 rounded-lg h-9 px-3 text-[10px] text-zinc-400 outline-none truncate"
+                  />
+                  <button
+                    on:click={selectExportPath}
+                    class="px-3 bg-zinc-800 hover:bg-zinc-700 text-[10px] font-bold text-zinc-300 rounded-lg transition-colors border border-zinc-700"
+                  >
+                    BROWSE
+                  </button>
+                </div>
+              </div>
+
               <div class="space-y-2">
                 <span class="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">Export Format</span>
                 <select class="w-full bg-[#0d0d0d] border border-zinc-800 rounded-lg h-9 px-3 text-xs text-zinc-200 outline-none focus:border-blue-500/50 transition-colors">
@@ -1085,20 +1166,37 @@
         </div>
 
         <div class="bg-[#181818] p-4 flex gap-3 border-t border-zinc-800">
-          <button
-            on:click={() => showExportDialog = false}
-            disabled={isExporting}
-            class="flex-1 h-9 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-[11px] font-bold text-zinc-300 transition-all active:scale-95 disabled:opacity-50"
-          >
-            CANCEL
-          </button>
-          <button
-            on:click={handleExport}
-            disabled={isExporting}
-            class="flex-1 h-9 rounded-xl bg-blue-600 hover:bg-blue-500 text-[11px] font-bold text-white transition-all active:scale-95 shadow-lg shadow-blue-600/20 disabled:opacity-50"
-          >
-            {isExporting ? 'EXPORTING...' : 'START EXPORT'}
-          </button>
+          {#if exportStatus === 'success' || exportStatus === 'error'}
+            <button
+              on:click={() => showExportDialog = false}
+              class="flex-1 h-9 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-[11px] font-bold text-zinc-300 transition-all active:scale-95"
+            >
+              CLOSE
+            </button>
+            {#if exportStatus === 'error'}
+              <button
+                on:click={handleExport}
+                class="flex-1 h-9 rounded-xl bg-blue-600 hover:bg-blue-500 text-[11px] font-bold text-white transition-all active:scale-95 shadow-lg shadow-blue-600/20"
+              >
+                RETRY EXPORT
+              </button>
+            {/if}
+          {:else}
+            <button
+              on:click={() => showExportDialog = false}
+              disabled={isExporting}
+              class="flex-1 h-9 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-[11px] font-bold text-zinc-300 transition-all active:scale-95 disabled:opacity-50"
+            >
+              CANCEL
+            </button>
+            <button
+              on:click={handleExport}
+              disabled={isExporting}
+              class="flex-1 h-9 rounded-xl bg-blue-600 hover:bg-blue-500 text-[11px] font-bold text-white transition-all active:scale-95 shadow-lg shadow-blue-600/20 disabled:opacity-50"
+            >
+              {isExporting ? 'EXPORTING...' : 'START EXPORT'}
+            </button>
+          {/if}
         </div>
       </div>
     </div>
