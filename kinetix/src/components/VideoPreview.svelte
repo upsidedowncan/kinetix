@@ -595,7 +595,7 @@
       }
       sourceElement = tempCanvas;
     } else if (isImage) {
-      sourceElement = canvas.parentElement?.querySelector('img');
+      sourceElement = document.getElementById(`clip-img-${effectClip.id}`);
       if (!sourceElement || !sourceElement.complete) {
         if (isPlaying) animationFrame = requestAnimationFrame(renderCanvas);
         return;
@@ -1162,7 +1162,12 @@
                   on:mouseenter={() => isHoveringClip = true}
                   on:mouseleave={() => isHoveringClip = false}
                 >
-                  <img src={clip.src} alt="" class="max-h-full max-w-full object-contain pointer-events-none" />
+                  <img
+                    id="clip-img-{clip.id}"
+                    src={clip.src}
+                    alt=""
+                    class="max-h-full max-w-full object-contain pointer-events-none"
+                  />
                   
                   {#if selectedClip?.id === clip.id}
                     <!-- Handles -->
