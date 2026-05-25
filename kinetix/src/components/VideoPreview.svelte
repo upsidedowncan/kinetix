@@ -89,8 +89,8 @@
   let isPanning = false;
   let panStartX = 0;
   let panStartY = 0;
-  let scrollStartX = 0;
-  let scrollStartY = 0;
+  let offsetX = 0;
+  let offsetY = 0;
   let scrollContainer: HTMLDivElement;
   let animationFrame: number;
   let mouseX = 0;
@@ -129,25 +129,19 @@
   }
 
   function handlePanMouseDown(e: MouseEvent) {
-    if (e.button === 1) { // Middle click
+    if (e.button === 1 || (e.button === 0 && e.altKey)) { // Middle click or Alt+Left Click
       e.preventDefault();
       isPanning = true;
-      panStartX = e.clientX;
-      panStartY = e.clientY;
-      if (scrollContainer) {
-        scrollStartX = scrollContainer.scrollLeft;
-        scrollStartY = scrollContainer.scrollTop;
-      }
+      panStartX = e.clientX - offsetX;
+      panStartY = e.clientY - offsetY;
       document.body.style.cursor = 'grabbing';
     }
   }
 
   function handlePanMouseMove(e: MouseEvent) {
-    if (isPanning && scrollContainer) {
-      const dx = e.clientX - panStartX;
-      const dy = e.clientY - panStartY;
-      scrollContainer.scrollLeft = scrollStartX - dx;
-      scrollContainer.scrollTop = scrollStartY - dy;
+    if (isPanning) {
+      offsetX = e.clientX - panStartX;
+      offsetY = e.clientY - panStartY;
     }
   }
 
@@ -978,8 +972,8 @@
   <div 
     bind:this={scrollContainer}
     role="application"
-    aria-label="Preview scroll container"
-    class="flex-1 overflow-auto relative flex items-center justify-center p-8 no-scrollbar outline-none cursor-none" 
+    aria-label="Preview container"
+    class="flex-1 overflow-hidden relative flex items-center justify-center no-scrollbar outline-none cursor-none"
     bind:clientWidth={containerWidth} 
     bind:clientHeight={containerHeight}
     on:wheel|passive={handleWheel}
@@ -1028,7 +1022,7 @@
     {/if}
     <div 
       class="relative bg-black shadow-[0_0_100px_rgba(0,0,0,0.5)] overflow-hidden checkerboard shrink-0"
-      style="width: {projectWidth}px; height: {projectHeight}px; transform: scale({zoomLevel}); transform-origin: center;"
+      style="width: {projectWidth}px; height: {projectHeight}px; transform: translate3d({offsetX}px, {offsetY}px, 0) scale({zoomLevel}); transform-origin: center; transition: none;"
       bind:clientWidth={previewStageWidth}
       bind:clientHeight={previewStageHeight}
     >

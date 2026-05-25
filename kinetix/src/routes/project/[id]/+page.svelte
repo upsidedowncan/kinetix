@@ -135,22 +135,34 @@
 
     // Simulate progress
     const interval = setInterval(() => {
-      exportProgress += 2;
-      if (exportProgress >= 98) clearInterval(interval);
-    }, 50);
+      if (exportProgress < 98) {
+        exportProgress += 2;
+      }
+    }, 100);
 
     try {
+      // Create a simplified project data for the backend
+      const simplifiedTracks = timelineTracks.map(track =>
+        track.map(clip => ({
+          ...clip,
+          // Ensure src is an absolute path if possible
+          src: clip.src.startsWith('blob:') || clip.src.startsWith('asset:') ? clip.src : clip.src
+        }))
+      );
+
       const result = await invoke('export_video', {
         projectData: {
-          tracks: timelineTracks,
+          tracks: simplifiedTracks,
           properties: clipProperties,
           settings: sequenceSettings
         },
         outputPath: exportPath
       });
+      console.log('Export result:', result);
       exportProgress = 100;
       exportStatus = 'success';
     } catch (e) {
+      console.error('Export error:', e);
       exportStatus = 'error';
       exportErrorMessage = String(e);
     } finally {
@@ -182,12 +194,12 @@
 
   // --- ACTIONS ---
 
-  function addMedia(name: string, src: string, dur: number, type: string, thumbnail?: string) {
-    console.log('addMedia:', name, type, dur, thumbnail ? 'with thumbnail' : 'no thumbnail');
+  function addMedia(name: string, src: string, dur: number, type: string, thumbnail?: string, filePath?: string) {
+    console.log('addMedia:', name, type, dur, thumbnail ? 'with thumbnail' : 'no thumbnail', filePath);
     
     const id = crypto.randomUUID();
     const finalDur = dur || 0.1;
-    const newFile = { id, name, src, type, duration: finalDur, thumbnail };
+    const newFile = { id, name, src, type, duration: finalDur, thumbnail, filePath };
     
     // 1. ALWAYS add to Media Pool
     mediaFiles.push(newFile);
@@ -217,7 +229,8 @@
       src, 
       type, 
       duration: finalDur, 
-      startTime: 0 // All clips start at time 0 for now
+      startTime: 0, // All clips start at time 0 for now
+      filePath
     };
     timelineTracks[trackIdx].push(newClip);
     timelineTracks = [...timelineTracks];
@@ -1024,13 +1037,13 @@
                   const src = URL.createObjectURL(blob);
                   const thumbnail = convertFileSrc(proxyData.thumbnail_path);
                   
-                  addMedia(fileName, src, proxyData.duration_secs, mimeType, thumbnail);
+                  addMedia(fileName, src, proxyData.duration_secs, mimeType, thumbnail, path);
                 } catch (e) {
                   console.error('Failed to proxy dropped file:', e);
-                  addMedia(fileName, convertFileSrc(path), 0, mimeType);
+                  addMedia(fileName, convertFileSrc(path), 0, mimeType, undefined, path);
                 }
               } else {
-                addMedia(fileName, convertFileSrc(path), 5, mimeType);
+                addMedia(fileName, convertFileSrc(path), 5, mimeType, undefined, path);
               }
             }
           }
@@ -1357,7 +1370,7 @@
           // Sidebar now uses Tauri dialog + Rust backend to get metadata
           const { name, src, type, duration, filePath, thumbnail } = e.detail;
           console.log('Sidebar import with Rust metadata:', name, type, duration);
-          addMedia(name, src, duration, type, thumbnail);
+          addMedia(name, src, duration, type, thumbnail, filePath);
         }}
         on:addtext={addTextClip}
         on:addsticker={(e) => addStickerClip(e.detail)}
@@ -1409,7 +1422,7 @@
             projectWidth={sequenceSettings.width}
             projectHeight={sequenceSettings.height}
             on:toggleplay={() => isPlaying ? stopPlayback() : startPlayback()}
-            on:videoimport={(e: any) => addMedia(e.detail.name, e.detail.src, e.detail.duration, e.detail.type)}
+            on:videoimport={(e: any) => addMedia(e.detail.name, e.detail.src, e.detail.duration, e.detail.type, undefined, e.detail.filePath)}
             on:clipdrag={handleClipDrag}
             on:clipresize={handleClipResizePreview}
             on:select={(e: any) => handleClipSelect(e.detail)}

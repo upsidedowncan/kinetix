@@ -172,22 +172,55 @@ async fn read_video_file(file_path: String) -> Result<Vec<u8>, String> {
 async fn export_video(project_data: serde_json::Value, output_path: String) -> Result<String, String> {
     println!("Backend: Starting export to {}", output_path);
 
-    // In a real implementation, we would construct an FFmpeg command based on project_data.
-    // For this prototype, we'll simulate a successful export.
+    // 1. Identify the primary media from project_data
+    // In this simplified version, we find the first clip with a valid src
+    let tracks = project_data.get("tracks").and_then(|v| v.as_array());
+    let mut primary_src = None;
 
-    let status = Command::new("ffmpeg")
-        .args([
-            "-version"
-        ])
-        .status();
+    if let Some(tracks) = tracks {
+        for track in tracks {
+            if let Some(clips) = track.as_array() {
+                for clip in clips {
+                    if let Some(path) = clip.get("filePath").and_then(|s| s.as_str()) {
+                        if !path.is_empty() {
+                            primary_src = Some(path.to_string());
+                            break;
+                        }
+                    }
+                }
+            }
+            if primary_src.is_some() { break; }
+        }
+    }
 
-    match status {
-        Ok(s) if s.success() => {
-            // Simulate processing time
-            std::thread::sleep(std::time::Duration::from_secs(2));
-            Ok(format!("Successfully exported to {}", output_path))
-        },
-        _ => Err("FFmpeg not found or failed. Please ensure FFmpeg is installed for high-quality export.".to_string())
+    // 2. Construct FFmpeg command
+    let mut cmd = Command::new("ffmpeg");
+    cmd.arg("-y"); // Overwrite output file
+
+    if let Some(src) = primary_src {
+        println!("Exporting based on primary source: {}", src);
+        cmd.args(["-i", &src]);
+    } else {
+        // Fallback: Create a black screen video if no media found
+        cmd.args(["-f", "lavfi", "-i", "color=c=black:s=1920x1080:d=5"]);
+    }
+
+    cmd.args([
+        "-c:v", "libx264",
+        "-preset", "medium",
+        "-crf", "23",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-pix_fmt", "yuv420p",
+        &output_path
+    ]);
+
+    let status = cmd.status().map_err(|e| format!("Failed to execute FFmpeg: {}", e))?;
+
+    if status.success() {
+        Ok(format!("Successfully exported to {}", output_path))
+    } else {
+        Err("FFmpeg failed to generate the video file. Check if your sources are valid.".to_string())
     }
 }
 
